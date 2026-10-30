@@ -1,0 +1,29 @@
+{
+  "name": "propdf-studio",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "frontend",
+    "backend"
+  ],
+  "scripts": {
+    "dev": "concurrently -k \"npm:dev:backend\" \"npm:dev:frontend\"",
+    "dev:backend": "npm --workspace backend run dev",
+    "dev:frontend": "npm --workspace frontend run dev",
+    "build": "npm run build:frontend && npm run build:backend",
+    "test": "npm --workspace backend test",
+    "build:frontend": "npm --workspace frontend run build",
+    "build:backend": "npm --workspace backend run build",
+    "typecheck": "npm --workspace frontend run typecheck && npm --workspace backend run typecheck",
+    "test:backend": "npm --workspace backend test",
+    "prisma:generate": "npm --workspace backend exec prisma generate",
+    "prisma:validate": "npm --workspace backend exec prisma validate"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2"
+  },
+  "engines": {
+    "node": ">=20.11.0",
+    "npm": ">=10.2.0"
+  }
+}

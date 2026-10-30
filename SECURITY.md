@@ -1,0 +1,2 @@
+# Security status
+Helmet, CORS allow-list, API rate limiting, upload size limits, MIME filtering and PDF parsing validation are included. Important production blockers remain: authentication routes and ownership authorization, malware scanning, private object storage, CSRF strategy for cookie sessions, audit logging and verified redaction are not implemented. Do not store confidential documents on an internet-facing deployment until these controls are completed.
