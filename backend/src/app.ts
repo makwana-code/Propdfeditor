@@ -37,7 +37,7 @@ const upload = multer({
   limits: { fileSize: maxUploadBytes, files: 10 },
   fileFilter: (_req, file, callback) => {
     const looksLikePdf = file.mimetype === 'application/pdf' || path.extname(file.originalname).toLowerCase() === '.pdf';
-    callback(looksLikePdf ? null : new Error('Only PDF files are accepted'), looksLikePdf);
+    callback(null, looksLikePdf);
   },
 });
 
