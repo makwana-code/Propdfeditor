@@ -189,7 +189,7 @@ const TEXT_STYLES = [
     "label": "Blue Callout",
     "font": "Aptos",
     "size": 14,
-    "color": "#FFFFFF",
+    "color": "#1F4E79",
     "bold": true,
     "italic": false,
     "underline": false,
@@ -292,7 +292,8 @@ export default function App() {
   function resizeSelectedBox(dimension: 'w'|'h', amount: number) {
     if (!selected) return;
     const next = Math.max(dimension === 'w' ? .08 : .04, Math.min(dimension === 'w' ? 1-selected.x : 1-selected.y, selected[dimension] + amount));
-    updateAnnotation(selected.id, { [dimension]: next });
+    if (dimension === 'w') updateAnnotation(selected.id, { w: next });
+    else updateAnnotation(selected.id, { h: next });
   }
 
   useEffect(() => {
@@ -415,7 +416,7 @@ export default function App() {
     if (!point) return;
     if (tool === 'text') {
       const id = crypto.randomUUID();
-      setAnnotations(old => [...old, { id, page, text: 'Type here', x: point.x, y: point.y, w: .34, h: .12, font: activeStyle.font, size: activeStyle.size, color: activeStyle.color, styleId: activeStyle.id, bold: activeStyle.bold, italic: activeStyle.italic, underline: activeStyle.underline, align: activeStyle.align }]);
+      setAnnotations(old => [...old, { id, page, text: 'Type here', x: point.x, y: point.y, w: .34, h: .12, font, size: fontSize, color: fontColor, styleId: activeStyle.id, bold: activeStyle.bold, italic: activeStyle.italic, underline: activeStyle.underline, align: activeStyle.align }]);
       setSelectedId(id);
       setTool('select');
       setStatus('Text box added. Edit it, then resize using its bottom-right handle.');
@@ -450,13 +451,14 @@ export default function App() {
       for (const annotation of annotations) {
         const target = pdf.getPage(annotation.page - 1);
         const { width, height } = target.getSize();
-        let embedded = embeddedFonts.get(annotation.font);
+        const fontKey = annotation.font + ':' + (annotation.bold ? 'b' : '') + (annotation.italic ? 'i' : '');
+        let embedded = embeddedFonts.get(fontKey);
         if (!embedded) {
           const uploadedFont = fontAssets[annotation.font];
           embedded = uploadedFont
             ? await pdf.embedFont(uploadedFont, { subset: true })
             : await pdf.embedFont(fontStyleFor(annotation));
-          embeddedFonts.set(annotation.font, embedded);
+          embeddedFonts.set(fontKey, embedded);
         }
         const x = annotation.x * width;
         const top = annotation.y * height;
