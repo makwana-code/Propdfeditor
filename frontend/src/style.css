@@ -56,3 +56,17 @@
 .properties .tip{margin-top:16px}
 .comment-note button:hover{color:#b45309}
 @media(max-width:900px){.workspace{grid-template-columns:1fr}.workspace aside{border:0;border-bottom:1px solid #edf0f5}.workspace .properties{border:0;border-top:1px solid #edf0f5}.page-scroll{height:65vh;min-height:360px}.viewbar{height:auto;min-height:48px;gap:10px;flex-wrap:wrap;padding:9px 12px}.view-actions{flex-wrap:wrap;gap:5px}.pdf-page-stage{max-width:none}}
+
+/* Eight-direction resize handles for PDF text boxes */
+.pdf-annotation{overflow:visible;touch-action:none}
+.resize-handle{position:absolute;z-index:8;display:block;width:10px;height:10px;min-width:10px;min-height:10px;padding:0;margin:0;border:1px solid #fff;border-radius:2px;background:#2869b2;box-shadow:0 0 0 1px #2869b2;opacity:0;touch-action:none}
+.pdf-annotation.selected .resize-handle{opacity:1}
+.resize-n{left:50%;top:-5px;transform:translateX(-50%);cursor:ns-resize}
+.resize-s{left:50%;bottom:-5px;transform:translateX(-50%);cursor:ns-resize}
+.resize-e{right:-5px;top:50%;transform:translateY(-50%);cursor:ew-resize}
+.resize-w{left:-5px;top:50%;transform:translateY(-50%);cursor:ew-resize}
+.resize-ne{right:-5px;top:-5px;cursor:nesw-resize}
+.resize-nw{left:-5px;top:-5px;cursor:nwse-resize}
+.resize-se{right:-5px;bottom:-5px;cursor:nwse-resize}
+.resize-sw{left:-5px;bottom:-5px;cursor:nesw-resize}
+.pdf-annotation .resize-handle:hover{background:#174b86}
