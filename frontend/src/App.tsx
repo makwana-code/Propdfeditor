@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
-import type { MouseEvent } from 'react';
+import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
@@ -125,7 +125,7 @@ export default function App() {
     };
   }, []);
 
-  function beginResize(event: React.PointerEvent<HTMLButtonElement>, annotation: TextAnnotation, edge: string) {
+  function beginResize(event: ReactPointerEvent<HTMLButtonElement>, annotation: TextAnnotation, edge: string) {
     event.preventDefault();
     event.stopPropagation();
     const canvas = canvasRef.current;
