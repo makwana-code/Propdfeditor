@@ -110,7 +110,7 @@ export default function App() {
     return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
   }
 
-  function handleStageClick(event: React.MouseEvent<HTMLDivElement>) {
+  function handleStageClick(event: MouseEvent<HTMLDivElement>) {
     if ((event.target as HTMLElement).closest('.pdf-annotation, .comment-pin, .comment-note')) return;
     const point = normalizedPoint(event);
     if (!point) return;
