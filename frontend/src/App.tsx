@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
+import type { MouseEvent } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
@@ -102,7 +103,7 @@ export default function App() {
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
 
-  function normalizedPoint(event: React.MouseEvent<HTMLDivElement>) {
+  function normalizedPoint(event: MouseEvent<HTMLDivElement>) {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
