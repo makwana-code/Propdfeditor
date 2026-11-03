@@ -3,6 +3,7 @@ import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import fontkit from '@pdf-lib/fontkit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -33,6 +34,7 @@ export default function App() {
   const [font, setFont] = useState('Arial');
   const [fontSize, setFontSize] = useState(12);
   const [fontColor, setFontColor] = useState('#17243b');
+  const [fontAssets, setFontAssets] = useState<Record<string, Uint8Array>>({});
   const [commentDraft, setCommentDraft] = useState('');
   const [mergeFiles, setMergeFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -194,10 +196,19 @@ export default function App() {
     setBusy(true);
     try {
       const pdf = await PDFDocument.load(document.bytes.slice(0));
+      pdf.registerFontkit(fontkit);
+      const embeddedFonts = new Map<string, Awaited<ReturnType<typeof pdf.embedFont>>>();
       for (const annotation of annotations) {
         const target = pdf.getPage(annotation.page - 1);
         const { width, height } = target.getSize();
-        const embedded = await pdf.embedFont(PDF_FONT[annotation.font] || StandardFonts.Helvetica);
+        let embedded = embeddedFonts.get(annotation.font);
+        if (!embedded) {
+          const uploadedFont = fontAssets[annotation.font];
+          embedded = uploadedFont
+            ? await pdf.embedFont(uploadedFont, { subset: true })
+            : await pdf.embedFont(PDF_FONT[annotation.font] || StandardFonts.Helvetica);
+          embeddedFonts.set(annotation.font, embedded);
+        }
         const x = annotation.x * width;
         const top = annotation.y * height;
         const size = annotation.size;
@@ -288,19 +299,20 @@ export default function App() {
             {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge => <button key={edge} type="button" aria-label={'Resize text box ' + edge} className={'resize-handle resize-' + edge} onPointerDown={event => beginResize(event, a, edge)} />)}
             <span className="resize-label">Drag any edge or corner to resize</span>
           </div>)}
-          <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none">{comments.filter(c=>c.page===page).map((c,i)=><g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L '+(Math.min(920, 690+i*12))+' '+(70+i*70)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>)}</svg>
-          {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:(4+i*12)+'%',right:'2%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>)}
+          <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none">{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);const endY=(cardTop+5)*10;return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+endY} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/><circle cx="740" cy={endY} r="4" fill="#d28b27"/></g>})}</svg>
+          {comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <div key={c.id} className="comment-note" style={{top:cardTop+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>})}
         </div></div> : <div className="empty"><div className="fileicon">PDF</div><h2>Your workspace is ready</h2><p>Open a PDF to start editing.</p></div>}
       </article>
       <aside className="properties"><h3>TEXT FORMATTING</h3>
         <label htmlFor="font-family">Font family</label><select id="font-family" value={selected?.font||font} onChange={e=>{setFont(e.target.value);if(selected)updateAnnotation(selected.id,{font:e.target.value})}}>{FONT_FAMILIES.map(f=><option key={f} value={f} style={{fontFamily:f}}>{f}</option>)}</select>
+        <label htmlFor="font-upload">Embed exact font in exported PDF (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());setFontAssets(old=>({...old,[selected?.font||font]:bytes}));setStatus(file.name+' will be embedded for '+(selected?.font||font)+' in the exported PDF.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/><p className="small-note">Choose the matching licensed font file for the selected family to preserve its appearance in export.</p>
         <label htmlFor="font-size">Font size (pt)</label><div className="size-row"><button onClick={()=>{const v=Math.max(6,(selected?.size||fontSize)-1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>−</button><input id="font-size" type="number" min="6" max="96" value={selected?.size||fontSize} onChange={e=>{const v=Math.max(6,Math.min(96,Number(e.target.value)||6));setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}/><button onClick={()=>{const v=Math.min(96,(selected?.size||fontSize)+1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>＋</button></div>
         <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
         <h3 className="section-label">SELECTED TEXT BOX</h3><label htmlFor="box-width">Width (%)</label><input id="box-width" type="range" min="8" max="95" value={Math.round((selected?.w||.34)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{w:Number(e.target.value)/100})}/><label htmlFor="box-height">Height (%)</label><input id="box-height" type="range" min="4" max="80" value={Math.round((selected?.h||.12)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{h:Number(e.target.value)/100})}/><p className="small-note">{selected?'Resize with the corner handle or use these width and height controls.':'Select a text box to resize it.'}</p>
         <button disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(a=>a.id!==selected.id));setSelectedId(null)}}}>Delete selected text box</button>
         <h3 className="section-label">COMMENTS</h3><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write a comment, then click Add comment and select its position…"/><p className="small-note">{comments.length} comment(s) saved in this editing session</p>
         <button className="primary" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Exporting…':'Export edited PDF'}</button>
-        <div className="tip"><b>PDF font compatibility</b><p>Font choices are shown in the editor. PDF export maps families to the closest built-in PDF fonts (Times, Helvetica or Courier). Exact proprietary font matching requires the corresponding licensed font files.</p></div>
+        <div className="tip"><b>PDF font compatibility</b><p>Uploaded TTF/OTF fonts are embedded in the exported PDF. Without an uploaded font file, the export uses the closest standard PDF font substitute.</p></div>
       </aside>
     </section>
     <footer><span role="status">{status}</span><span>ProPDF Studio · Editor</span></footer>
