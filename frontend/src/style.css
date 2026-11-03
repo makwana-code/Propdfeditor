@@ -70,3 +70,9 @@
 .resize-se{right:-5px;bottom:-5px;cursor:nwse-resize}
 .resize-sw{left:-5px;bottom:-5px;cursor:nesw-resize}
 .pdf-annotation .resize-handle:hover{background:#174b86}
+
+/* Font upload and anchored comment card layout */
+.properties input[type=file]{display:block;width:100%;max-width:100%;font-size:10px;color:#64748a;margin:4px 0 8px}
+.comment-note{left:74%;right:auto;width:24%;max-width:24%;min-width:0;box-sizing:border-box}
+.comment-note span{overflow-wrap:anywhere}
+@media(max-width:900px){.comment-note{width:24%;max-width:24%;padding:7px 20px 7px 7px;font-size:10px}}
