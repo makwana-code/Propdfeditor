@@ -560,46 +560,81 @@ export default function App() {
     finally { setBusy(false); }
   }
 
-  return <main className="app-shell">
-    <header><div className="brand"><span className="logo">P</span><div><b>ProPDF Studio</b><small>Professional PDF workspace</small></div></div><span className="pill">PDF EDITOR</span></header>
-    <section className="welcome"><div><p className="eyebrow">YOUR DOCUMENT WORKSPACE</p><h1>Make every PDF<br/><em>work harder.</em></h1><p className="sub">Edit, annotate, format and export your PDF documents.</p></div><label className="upload"><input type="file" accept="application/pdf,.pdf" onChange={e => void openPdf(e.target.files?.[0])}/><strong>＋ Open a PDF</strong><span>Choose a file from your device</span></label></section>
-    <section className="workspace">
-      <aside className="left-tools"><h3>TOOLS</h3>
-        <button className={tool==='select'?'tool active':'tool'} onClick={()=>setTool('select')}>↖ Select</button>
-        <button className={tool==='text'?'tool active':'tool'} onClick={()=>setTool('text')}>T Add text box</button>
-        <button className={tool==='comment'?'tool active':'tool'} onClick={()=>setTool('comment')}>▱ Add comment</button>
-        <div className="tip"><b>Quick guide</b><p>Choose Add text box and click on the page. Choose Add comment, write a note and click its exact location.</p></div>
-        <h3 className="section-label">MERGE PDFS</h3><label className="file-picker">Choose PDF files<input type="file" accept="application/pdf,.pdf" multiple onChange={e=>setMergeFiles(Array.from(e.target.files||[]))}/></label><p className="small-note">{mergeFiles.length ? mergeFiles.length+' file(s) selected' : 'Select at least 2 files'}</p><button className="wide-button" disabled={busy||mergeFiles.length<2} onClick={()=>void mergePdfs()}>Merge & download</button>
+  return <main className="app-shell pdf-studio">
+    <header className="studio-header">
+      <div className="brand"><span className="logo">P</span><div><b>ProPDF Studio</b><small>Edit PDFs in your browser</small></div></div>
+      <button className="sign-in" type="button" onClick={()=>setStatus('Sign-in and cloud sync are not configured yet.')}>Sign in</button>
+    </header>
+
+    <nav className="studio-toolbar" aria-label="PDF editing toolbar">
+      <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
+      <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a text box.')}}>T&nbsp; Add text</button>
+      <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('comment');setStatus('Write a comment in the properties panel, then click the PDF page.')}}>▱ Comment</button>
+      <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
+      <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
+      <span className="toolbar-divider"/>
+      <button className="toolbar-button" disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(x=>x.id!==selected.id));setSelectedId(null)}}}>▤ Remove</button>
+      <span className="toolbar-divider"/>
+      <button className="toolbar-button" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button>
+      <span className="toolbar-page">{document? page+' / '+document.pages : '– / –'}</span>
+      <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
+      <span className="toolbar-divider"/>
+      <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
+      <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
+      <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
+      <button className="toolbar-button" onClick={()=>setStatus('Comments: '+comments.length+' in this document session.')}>▢ Comments ({comments.length})</button>
+      <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
+      <button className="toolbar-button" onClick={()=>setStatus('Cloud saving is not connected in this version.')}>☁ Save to cloud</button>
+    </nav>
+
+    <section className="studio-workspace">
+      <aside className="studio-pages">
+        <button className="side-tab active" type="button" onClick={()=>setStatus(document?'Page navigation':'Open a PDF to view pages.')}>▣<span>Pages</span></button>
+        <button className="side-tab" type="button" disabled>▤<span>Bookmarks</span></button>
+        <button className="side-tab" type="button" disabled>☷<span>Outline</span></button>
+        <button className="side-tab" type="button" disabled>⌕<span>Search</span></button>
+        {document&&<div className="page-mini-list"><button className="page-mini active" onClick={()=>setPage(1)}><span>PDF</span><b>1</b></button>{document.pages>1&&<button className="page-mini" onClick={()=>setPage(2)}><span>PDF</span><b>2</b></button>}<small>{document.pages} page(s)</small></div>}
       </aside>
-      <article className="viewer">
-        <div className="viewbar"><span title={document?.file.name}>{document?.file.name||'No document opened'}</span><div className="view-actions">
-          <button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>‹</button><span>{page} / {document?.pages||0}</span><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>›</button><i/>
-          <button disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button><span className="zoom-value">{Math.round(fitZoom*zoom/100)}%</span><button disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button><button disabled={!document} onClick={()=>setZoom(100)}>Fit</button>
-        </div></div>
-        {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
-          <canvas ref={canvasRef}/>
-          {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
-            <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
-            {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge => <button key={edge} type="button" aria-label={'Resize text box ' + edge} className={'resize-handle resize-' + edge} onPointerDown={event => beginResize(event, a, edge)} />)}
-            <span className="resize-label">Drag any edge or corner to resize</span>
-          </div>)}
-          <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none">{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);const endY=(cardTop+5)*10;return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+endY} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/><circle cx="740" cy={endY} r="4" fill="#d28b27"/></g>})}</svg>
-          {comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <div key={c.id} className="comment-note" style={{top:cardTop+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>})}
-        </div></div> : <div className="empty"><div className="fileicon">PDF</div><h2>Your workspace is ready</h2><p>Open a PDF to start editing.</p></div>}
+
+      <article className="studio-viewer">
+        <div className="studio-scroll">
+          {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
+            <canvas ref={canvasRef}/>
+            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
+              <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
+              {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
+              <span className="resize-label">Drag to resize</span>
+            </div>)}
+            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none">{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
+            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>)}
+          </div></div> : <div className="studio-empty">
+            <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
+            <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
+            <label className="choose-pdf"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Choose a PDF</label>
+            <span>or drop a file here</span>
+          </div>}
+        </div>
+        <div className="studio-statusbar"><span>{document?'Page '+page+' of '+document.pages:status}</span><div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
-      <aside className="properties"><h3>TEXT FORMATTING</h3>
-        <label htmlFor="text-style-preset">20 ready-made text styles</label><select id="text-style-preset" value={selected?.styleId||activeStyleId} onChange={e=>applyTextStyle(e.target.value)}>{TEXT_STYLES.map(style=><option key={style.id} value={style.id}>{style.label}</option>)}</select><div className="style-preview" style={{fontFamily:activeStyle.font,fontSize:Math.min(24,activeStyle.size),fontWeight:activeStyle.bold?'700':'400',fontStyle:activeStyle.italic?'italic':'normal',color:activeStyle.color,textAlign:activeStyle.align}}>Aa Sample Text</div>
-        <label htmlFor="font-family">Font family</label><select id="font-family" value={selected?.font||font} onChange={e=>{setFont(e.target.value);if(selected)updateAnnotation(selected.id,{font:e.target.value})}}>{FONT_FAMILIES.map(f=><option key={f} value={f} style={{fontFamily:f}}>{f}</option>)}</select>
-        <label htmlFor="font-upload">Embed exact font in exported PDF (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());const family=selected?.font||font;const fontUrl=URL.createObjectURL(file);const face=new FontFace(family,'url('+fontUrl+')');await face.load();window.document.fonts.add(face);URL.revokeObjectURL(fontUrl);setFontAssets(old=>({...old,[family]:bytes}));setStatus(file.name+' is loaded in the editor and will be embedded for '+family+' in the exported PDF.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/><p className="small-note">Choose the matching licensed font file for the selected family to preserve its appearance in export.</p>
-        <label htmlFor="font-size">Font size (pt)</label><div className="size-row"><button onClick={()=>{const v=Math.max(6,(selected?.size||fontSize)-1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>−</button><input id="font-size" type="number" min="6" max="96" value={selected?.size||fontSize} onChange={e=>{const v=Math.max(6,Math.min(96,Number(e.target.value)||6));setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}/><button onClick={()=>{const v=Math.min(96,(selected?.size||fontSize)+1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>＋</button></div>
-        <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
-        <h3 className="section-label">SELECTED TEXT BOX</h3><label htmlFor="box-width">Width (%)</label><div className="dimension-row"><button disabled={!selected} aria-label="Decrease text box width" onClick={()=>resizeSelectedBox('w',-.02)}>−</button><input id="box-width" type="range" min="8" max="95" value={Math.round((selected?.w||.34)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{w:Number(e.target.value)/100})}/><button disabled={!selected} aria-label="Increase text box width" onClick={()=>resizeSelectedBox('w',.02)}>＋</button></div><label htmlFor="box-height">Height (%)</label><div className="dimension-row"><button disabled={!selected} aria-label="Decrease text box height" onClick={()=>resizeSelectedBox('h',-.02)}>−</button><input id="box-height" type="range" min="4" max="80" value={Math.round((selected?.h||.12)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{h:Number(e.target.value)/100})}/><button disabled={!selected} aria-label="Increase text box height" onClick={()=>resizeSelectedBox('h',.02)}>＋</button></div><p className="small-note">{selected?'Current box: '+Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high. Use − / + for 2% steps or drag the handles.':'Select a text box to resize it.'}</p>
-        <button disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(a=>a.id!==selected.id));setSelectedId(null)}}}>Delete selected text box</button>
-        <h3 className="section-label">COMMENTS</h3><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write a comment, then click Add comment and select its position…"/><p className="small-note">{comments.length} comment(s) saved in this editing session</p>
-        <button className="primary" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Exporting…':'Export edited PDF'}</button>
-        <div className="tip"><b>PDF font compatibility</b><p>Uploaded TTF/OTF fonts are embedded in the exported PDF. Without an uploaded font file, the export uses the closest standard PDF font substitute.</p></div>
+
+      <aside className="studio-properties">
+        <div className="property-heading"><b>Text Styles (20 styles)</b><span>⌃</span></div>
+        <div className="style-grid">{TEXT_STYLES.map((style,i)=><button key={style.id} className={(selected?.styleId||activeStyleId)===style.id?'style-choice active':'style-choice'} onClick={()=>applyTextStyle(style.id)}><span>Aa</span><small>{i+1}. {style.label}</small></button>)}</div>
+        <div className="property-heading size-heading"><b>↗　Text Box Size Controls</b><span>⌃</span></div>
+        <div className="box-size-control"><label htmlFor="box-width">Width:</label><button disabled={!selected} onClick={()=>resizeSelectedBox('w',-.02)}>−</button><input id="box-width" type="range" min="8" max="95" value={Math.round((selected?.w||.34)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{w:Number(e.target.value)/100})}/><button disabled={!selected} onClick={()=>resizeSelectedBox('w',.02)}>＋</button><b>{selected?Math.round(selected.w*100):100}%</b></div>
+        <div className="box-size-control"><label htmlFor="box-height">Height:</label><button disabled={!selected} onClick={()=>resizeSelectedBox('h',-.02)}>−</button><input id="box-height" type="range" min="4" max="80" value={Math.round((selected?.h||.12)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{h:Number(e.target.value)/100})}/><button disabled={!selected} onClick={()=>resizeSelectedBox('h',.02)}>＋</button><b>{selected?Math.round(selected.h*100):100}%</b></div>
+        <label className="resize-check"><input type="checkbox" checked readOnly/> Show resize handles</label>
+        <div className="property-heading size-heading"><b>⚙　Text Formatting</b><span>⌃</span></div>
+        <div className="formatting-panel">
+          <label htmlFor="font-family">Font family</label><select id="font-family" value={selected?.font||font} onChange={e=>{setFont(e.target.value);if(selected)updateAnnotation(selected.id,{font:e.target.value})}}>{FONT_FAMILIES.map(f=><option key={f} value={f}>{f}</option>)}</select>
+          <label htmlFor="font-size">Font size (pt)</label><div className="format-size"><button onClick={()=>{const v=Math.max(6,(selected?.size||fontSize)-1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>−</button><input id="font-size" type="number" min="6" max="96" value={selected?.size||fontSize} onChange={e=>{const v=Math.max(6,Math.min(96,Number(e.target.value)||6));setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}/><button onClick={()=>{const v=Math.min(96,(selected?.size||fontSize)+1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>＋</button></div>
+          <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
+          <label htmlFor="font-upload">Embed licensed font (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());const family=selected?.font||font;const fontUrl=URL.createObjectURL(file);const face=new FontFace(family,'url('+fontUrl+')');await face.load();window.document.fonts.add(face);URL.revokeObjectURL(fontUrl);setFontAssets(old=>({...old,[family]:bytes}));setStatus(file.name+' loaded and will be embedded in exported PDFs.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/>
+          <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
+          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write a comment, then select a point on the PDF…"/><small>{comments.length} comment(s)</small>
+        </div>
       </aside>
     </section>
-    <footer><span role="status">{status}</span><span>ProPDF Studio · Editor</span></footer>
+    <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
