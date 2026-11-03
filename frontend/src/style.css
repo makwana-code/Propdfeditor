@@ -22,3 +22,37 @@
 .comment-item p{margin:5px 0 0;line-height:1.45}
 .properties .section-label{margin-top:23px!important}
 @media(max-width:850px){.pdf-stage{height:65vh;min-height:360px}.viewbar{height:auto;min-height:48px;gap:10px;flex-wrap:wrap;padding:9px 12px}.view-actions{flex-wrap:wrap;gap:6px}}
+
+/* PDF editor interaction layer */
+.app-shell{min-height:100vh}
+.workspace{grid-template-columns:190px minmax(0,1fr) 260px}
+.left-tools,.properties{min-width:0}
+.view-actions{display:flex;align-items:center;gap:7px;white-space:nowrap}
+.view-actions i{height:22px;border-left:1px solid #e5eaf1;margin:0 3px}
+.zoom-value{min-width:46px;text-align:center;font-weight:700;color:#315f9b;font-variant-numeric:tabular-nums}
+.page-scroll{height:560px;overflow:auto;padding:22px;display:flex;justify-content:center;align-items:flex-start;background:#edf1f6}
+.pdf-page-stage{position:relative;display:inline-block;flex:0 0 auto;line-height:0;background:white;box-shadow:0 5px 22px #17243b22;cursor:crosshair}
+.pdf-page-stage canvas{display:block;max-width:none}
+.pdf-annotation{position:absolute;z-index:4;min-width:50px;min-height:25px;border:1px dashed transparent;background:#ffffff18;line-height:normal;box-sizing:border-box}
+.pdf-annotation.selected{border:1px solid #3478c8;background:#ffffff40;box-shadow:0 0 0 1px #fff}
+.pdf-annotation textarea{display:block;width:100%;height:100%;min-width:100%;min-height:100%;resize:both;overflow:auto;border:0;outline:0;padding:3px;background:transparent;color:inherit;font:inherit;line-height:1.25;box-sizing:border-box}
+.pdf-annotation.selected textarea{cursor:text}
+.resize-label{position:absolute;right:0;bottom:-17px;background:#285b9b;color:white;border-radius:3px;padding:2px 5px;font:9px 'DM Sans',sans-serif;white-space:nowrap;pointer-events:none;opacity:0}
+.pdf-annotation.selected .resize-label{opacity:1}
+.comment-connectors{position:absolute;z-index:5;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.comment-note{position:absolute;z-index:6;width:190px;max-width:35%;padding:9px 24px 9px 10px;border:1px solid #edcf9e;border-radius:7px;background:#fffaf1;color:#72511e;box-shadow:0 3px 12px #17243b1c;font:11px/1.35 'DM Sans',sans-serif;white-space:normal}
+.comment-note b,.comment-note span{display:block}
+.comment-note b{font-size:10px;margin-bottom:4px;color:#9a6418}
+.comment-note button{position:absolute;right:4px;top:3px;padding:1px 5px;width:auto;margin:0;border:0;background:transparent;font-size:15px}
+.properties select,.properties input[type=number]{width:100%;height:36px;border:1px solid #dce4ef;border-radius:8px;padding:7px 9px;background:#fff;color:#354a68;font:12px 'DM Sans',sans-serif;margin-bottom:14px}
+.properties input[type=range]{width:100%;accent-color:#315f9b;margin:4px 0 14px}
+.properties input[type=color]{display:block;width:100%;height:34px;border:1px solid #dce4ef;border-radius:7px;background:white;padding:3px;margin-bottom:12px}
+.size-row{display:grid;grid-template-columns:34px 1fr 34px;gap:7px;margin-bottom:14px}
+.size-row input{min-width:0!important;margin:0!important;text-align:center}
+.size-row button{padding:5px;margin:0!important;width:auto!important}
+.properties .comment-input{height:85px;min-height:85px}
+.properties .section-label{margin-top:22px!important}
+.properties button{margin-top:7px}
+.properties .tip{margin-top:16px}
+.comment-note button:hover{color:#b45309}
+@media(max-width:900px){.workspace{grid-template-columns:1fr}.workspace aside{border:0;border-bottom:1px solid #edf0f5}.workspace .properties{border:0;border-top:1px solid #edf0f5}.page-scroll{height:65vh;min-height:360px}.viewbar{height:auto;min-height:48px;gap:10px;flex-wrap:wrap;padding:9px 12px}.view-actions{flex-wrap:wrap;gap:5px}.pdf-page-stage{max-width:none}}
