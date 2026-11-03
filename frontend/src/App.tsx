@@ -245,6 +245,32 @@ export default function App() {
           if (line) target.drawText(line, { x: x + inset, y: height - top - size - index * lineHeight, size, font: embedded, color });
         });
       }
+      const commentFont = await pdf.embedFont(StandardFonts.Helvetica);
+      for (const comment of comments) {
+        const target = pdf.getPage(comment.page - 1);
+        const { width, height } = target.getSize();
+        const pageComments = comments.filter(item => item.page === comment.page);
+        const index = pageComments.findIndex(item => item.id === comment.id);
+        const cardTop = Math.min(0.88, 0.04 + index * 0.12);
+        const cardWidth = width * 0.24;
+        const cardHeight = Math.max(34, height * 0.075);
+        const cardX = width * 0.74;
+        const cardTopY = height * (1 - cardTop);
+        const cardY = cardTopY - cardHeight;
+        const anchor = { x: comment.x * width, y: height - comment.y * height };
+        const connectorEnd = { x: cardX, y: cardY + cardHeight / 2 };
+        const commentColor = rgb(0.82, 0.54, 0.15);
+        target.drawLine({ start: anchor, end: connectorEnd, thickness: 1.4, color: commentColor });
+        target.drawCircle({ x: anchor.x, y: anchor.y, size: 4, color: commentColor });
+        target.drawRectangle({
+          x: cardX, y: cardY, width: cardWidth, height: cardHeight,
+          color: rgb(1, 0.98, 0.93), borderColor: rgb(0.93, 0.81, 0.62), borderWidth: 0.8
+        });
+        target.drawText(comment.text, {
+          x: cardX + 6, y: cardY + cardHeight - 13, size: 8, font: commentFont,
+          color: rgb(0.42, 0.31, 0.13), maxWidth: cardWidth - 12, lineHeight: 10
+        });
+      }
       const bytes = await pdf.save();
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
       const anchor = window.document.createElement('a');
