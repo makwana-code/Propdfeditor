@@ -19,6 +19,7 @@ const PDF_FONT: Record<string, string> = {
 type PdfDocument = { file: File; bytes: ArrayBuffer; pages: number };
 type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string };
 type PdfComment = { id: string; page: number; x: number; y: number; text: string };
+type ResizeSession = { id: string; edge: string; startX: number; startY: number; start: TextAnnotation; pageWidth: number; pageHeight: number };
 
 export default function App() {
   const [document, setDocument] = useState<PdfDocument | null>(null);
@@ -39,6 +40,7 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
+  const resizeRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
 
@@ -89,6 +91,52 @@ export default function App() {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [selectedId]);
+
+  useEffect(() => {
+    function moveResize(event: PointerEvent) {
+      const session = resizeRef.current;
+      if (!session) return;
+      const dx = (event.clientX - session.startX) / session.pageWidth;
+      const dy = (event.clientY - session.startY) / session.pageHeight;
+      const a = session.start;
+      let x = a.x, y = a.y, w = a.w, h = a.h;
+      if (session.edge.includes('e')) w = Math.max(.08, Math.min(1 - x, a.w + dx));
+      if (session.edge.includes('s')) h = Math.max(.04, Math.min(1 - y, a.h + dy));
+      if (session.edge.includes('w')) {
+        const right = a.x + a.w;
+        x = Math.max(0, Math.min(right - .08, a.x + dx));
+        w = right - x;
+      }
+      if (session.edge.includes('n')) {
+        const bottom = a.y + a.h;
+        y = Math.max(0, Math.min(bottom - .04, a.y + dy));
+        h = bottom - y;
+      }
+      setAnnotations(old => old.map(item => item.id === session.id ? { ...item, x, y, w, h } : item));
+    }
+    function endResize() { resizeRef.current = null; }
+    window.addEventListener('pointermove', moveResize);
+    window.addEventListener('pointerup', endResize);
+    window.addEventListener('pointercancel', endResize);
+    return () => {
+      window.removeEventListener('pointermove', moveResize);
+      window.removeEventListener('pointerup', endResize);
+      window.removeEventListener('pointercancel', endResize);
+    };
+  }, []);
+
+  function beginResize(event: React.PointerEvent<HTMLButtonElement>, annotation: TextAnnotation, edge: string) {
+    event.preventDefault();
+    event.stopPropagation();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    resizeRef.current = {
+      id: annotation.id, edge, startX: event.clientX, startY: event.clientY,
+      start: { ...annotation }, pageWidth: rect.width, pageHeight: rect.height
+    };
+    setSelectedId(annotation.id);
+  }
 
   async function openPdf(file?: File) {
     if (!file) return;
@@ -153,26 +201,38 @@ export default function App() {
         const x = annotation.x * width;
         const top = annotation.y * height;
         const size = annotation.size;
-        const lines = annotation.text.split('\n');
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
-        let y = height - top - size * 1.2;
-        const maxWidth = Math.max(20, annotation.w * width - 8);
-        for (const line of lines) {
-          const words = line.split(/\s+/);
+        const boxWidth = Math.max(1, annotation.w * width);
+        const boxHeight = Math.max(1, annotation.h * height);
+        const inset = Math.min(4, boxWidth / 20);
+        const maxWidth = Math.max(1, boxWidth - inset * 2);
+        const lineHeight = size * 1.25;
+        const maxLines = Math.max(1, Math.floor(boxHeight / lineHeight));
+        const wrapped: string[] = [];
+        for (const paragraph of annotation.text.split('\n')) {
+          if (!paragraph) { wrapped.push(''); continue; }
           let current = '';
-          for (const word of words) {
+          for (const word of paragraph.split(/\s+/)) {
             const candidate = current ? current + ' ' + word : word;
-            if (embedded.widthOfTextAtSize(candidate, size) > maxWidth && current) {
-              target.drawText(current, { x: x + 4, y, size, font: embedded, color });
-              y -= size * 1.35;
+            if (current && embedded.widthOfTextAtSize(candidate, size) > maxWidth) {
+              wrapped.push(current);
               current = word;
+            } else if (!current && embedded.widthOfTextAtSize(word, size) > maxWidth) {
+              let chunk = '';
+              for (const char of word) {
+                if (chunk && embedded.widthOfTextAtSize(chunk + char, size) > maxWidth) {
+                  wrapped.push(chunk);
+                  chunk = char;
+                } else chunk += char;
+              }
+              current = chunk;
             } else current = candidate;
           }
-          if (current && y > height - (top + annotation.h * height)) {
-            target.drawText(current, { x: x + 4, y, size, font: embedded, color, maxWidth });
-          }
-          y -= size * 1.35;
+          if (current) wrapped.push(current);
         }
+        wrapped.slice(0, maxLines).forEach((line, index) => {
+          if (line) target.drawText(line, { x: x + inset, y: height - top - size - index * lineHeight, size, font: embedded, color });
+        });
       }
       const bytes = await pdf.save();
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
@@ -223,9 +283,10 @@ export default function App() {
         </div></div>
         {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
           <canvas ref={canvasRef}/>
-          {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*zoom/100)+'px',color:a.color}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
+          {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
             <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
-            <span className="resize-label">↘ resize</span>
+            {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge => <button key={edge} type="button" aria-label={'Resize text box ' + edge} className={'resize-handle resize-' + edge} onPointerDown={event => beginResize(event, a, edge)} />)}
+            <span className="resize-label">Drag any edge or corner to resize</span>
           </div>)}
           <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none">{comments.filter(c=>c.page===page).map((c,i)=><g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L '+(Math.min(920, 690+i*12))+' '+(70+i*70)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>)}</svg>
           {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:(4+i*12)+'%',right:'2%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>)}
