@@ -18,7 +18,241 @@ const PDF_FONT: Record<string, string> = {
   'Book Antiqua': StandardFonts.TimesRoman, 'Courier New': StandardFonts.Courier
 };
 type PdfDocument = { file: File; bytes: ArrayBuffer; pages: number };
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string };
+const TEXT_STYLES = [
+  {
+    "id": "title",
+    "label": "Title",
+    "font": "Aptos Display",
+    "size": 30,
+    "color": "#17365D",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "subtitle",
+    "label": "Subtitle",
+    "font": "Aptos",
+    "size": 20,
+    "color": "#4472C4",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "heading1",
+    "label": "Heading 1",
+    "font": "Arial",
+    "size": 24,
+    "color": "#1F4E78",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "heading2",
+    "label": "Heading 2",
+    "font": "Arial",
+    "size": 20,
+    "color": "#2F5597",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "heading3",
+    "label": "Heading 3",
+    "font": "Calibri",
+    "size": 16,
+    "color": "#4472C4",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "heading4",
+    "label": "Heading 4",
+    "font": "Calibri",
+    "size": 14,
+    "color": "#5B9BD5",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "body",
+    "label": "Body Text",
+    "font": "Calibri",
+    "size": 12,
+    "color": "#222222",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "bodycompact",
+    "label": "Compact Body",
+    "font": "Arial",
+    "size": 10,
+    "color": "#333333",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "caption",
+    "label": "Caption",
+    "font": "Arial",
+    "size": 9,
+    "color": "#666666",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "quote",
+    "label": "Quote",
+    "font": "Georgia",
+    "size": 14,
+    "color": "#595959",
+    "bold": false,
+    "italic": true,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "pullquote",
+    "label": "Pull Quote",
+    "font": "Georgia",
+    "size": 20,
+    "color": "#7030A0",
+    "bold": false,
+    "italic": true,
+    "underline": false,
+    "align": "center"
+  },
+  {
+    "id": "emphasis",
+    "label": "Emphasis",
+    "font": "Calibri",
+    "size": 12,
+    "color": "#C00000",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "strong",
+    "label": "Strong",
+    "font": "Arial",
+    "size": 12,
+    "color": "#1F1F1F",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "subtle",
+    "label": "Subtle",
+    "font": "Calibri Light",
+    "size": 11,
+    "color": "#7F7F7F",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "highlight",
+    "label": "Highlight",
+    "font": "Arial",
+    "size": 12,
+    "color": "#BF9000",
+    "bold": true,
+    "italic": false,
+    "underline": true,
+    "align": "left"
+  },
+  {
+    "id": "bluecallout",
+    "label": "Blue Callout",
+    "font": "Aptos",
+    "size": 14,
+    "color": "#FFFFFF",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "center"
+  },
+  {
+    "id": "success",
+    "label": "Success",
+    "font": "Arial",
+    "size": 12,
+    "color": "#548235",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "warning",
+    "label": "Warning",
+    "font": "Arial",
+    "size": 12,
+    "color": "#C65911",
+    "bold": true,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "legal",
+    "label": "Legal / Formal",
+    "font": "Times New Roman",
+    "size": 11,
+    "color": "#222222",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  },
+  {
+    "id": "mono",
+    "label": "Code / Monospace",
+    "font": "Courier New",
+    "size": 11,
+    "color": "#375623",
+    "bold": false,
+    "italic": false,
+    "underline": false,
+    "align": "left"
+  }
+] as const;
+const PDF_FONT_STYLE: Record<string, { regular: string; bold: string; italic: string; boldItalic: string }> = {
+  serif: { regular: StandardFonts.TimesRoman, bold: StandardFonts.TimesRomanBold, italic: StandardFonts.TimesRomanItalic, boldItalic: StandardFonts.TimesRomanBoldItalic },
+  sans: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold, italic: StandardFonts.HelveticaOblique, boldItalic: StandardFonts.HelveticaBoldOblique },
+  mono: { regular: StandardFonts.Courier, bold: StandardFonts.CourierBold, italic: StandardFonts.CourierOblique, boldItalic: StandardFonts.CourierBoldOblique }
+};
+function fontStyleFor(annotation: TextAnnotation) {
+  const family = annotation.font.toLowerCase();
+  const kind = family.includes('courier') || family.includes('consolas') ? 'mono' : ['times','cambria','georgia','garamond','antiqua','palatino','bookman'].some(v => family.includes(v)) ? 'serif' : 'sans';
+  const style = PDF_FONT_STYLE[kind];
+  return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
+};
+
+type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right' };
 type PdfComment = { id: string; page: number; x: number; y: number; text: string };
 type ResizeSession = { id: string; edge: string; startX: number; startY: number; start: TextAnnotation; pageWidth: number; pageHeight: number };
 
