@@ -8,9 +8,9 @@ import fontkit from '@pdf-lib/fontkit';
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
 const FONT_FAMILIES = [
-  'Arial','Arial Narrow','Calibri','Calibri Light','Aptos','Aptos Display',
-  'Times New Roman','Cambria','Georgia','Verdana','Tahoma','Trebuchet MS',
-  'Courier New','Garamond','Book Antiqua','Century Gothic','Comic Sans MS'
+  'Arial','Arial Narrow','Calibri','Calibri Body','Calibri Light','Aptos','Aptos Display','Aptos Narrow',
+  'Times New Roman','Cambria','Georgia','Verdana','Tahoma','Trebuchet MS','Segoe UI','Franklin Gothic',
+  'Courier New','Consolas','Garamond','Book Antiqua','Palatino Linotype','Century Gothic','Lucida Sans','Bookman Old Style','Comic Sans MS'
 ];
 const PDF_FONT: Record<string, string> = {
   'Times New Roman': StandardFonts.TimesRoman, Cambria: StandardFonts.TimesRoman,
