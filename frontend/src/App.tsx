@@ -269,6 +269,7 @@ export default function App() {
   const [fontSize, setFontSize] = useState(12);
   const [fontColor, setFontColor] = useState('#17243b');
   const [fontAssets, setFontAssets] = useState<Record<string, Uint8Array>>({});
+  const [activeStyleId, setActiveStyleId] = useState('body');
   const [commentDraft, setCommentDraft] = useState('');
   const [mergeFiles, setMergeFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
@@ -279,6 +280,20 @@ export default function App() {
   const resizeRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
+  const activeStyle = TEXT_STYLES.find(style => style.id === (selected?.styleId || activeStyleId)) || TEXT_STYLES[6];
+
+  function applyTextStyle(styleId: string) {
+    const preset = TEXT_STYLES.find(style => style.id === styleId);
+    if (!preset) return;
+    setActiveStyleId(styleId); setFont(preset.font); setFontSize(preset.size); setFontColor(preset.color);
+    if (selected) updateAnnotation(selected.id, { styleId, font: preset.font, size: preset.size, color: preset.color, bold: preset.bold, italic: preset.italic, underline: preset.underline, align: preset.align });
+  }
+
+  function resizeSelectedBox(dimension: 'w'|'h', amount: number) {
+    if (!selected) return;
+    const next = Math.max(dimension === 'w' ? .08 : .04, Math.min(dimension === 'w' ? 1-selected.x : 1-selected.y, selected[dimension] + amount));
+    updateAnnotation(selected.id, { [dimension]: next });
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -400,7 +415,7 @@ export default function App() {
     if (!point) return;
     if (tool === 'text') {
       const id = crypto.randomUUID();
-      setAnnotations(old => [...old, { id, page, text: 'Type here', x: point.x, y: point.y, w: .34, h: .12, font, size: fontSize, color: fontColor }]);
+      setAnnotations(old => [...old, { id, page, text: 'Type here', x: point.x, y: point.y, w: .34, h: .12, font: activeStyle.font, size: activeStyle.size, color: activeStyle.color, styleId: activeStyle.id, bold: activeStyle.bold, italic: activeStyle.italic, underline: activeStyle.underline, align: activeStyle.align }]);
       setSelectedId(id);
       setTool('select');
       setStatus('Text box added. Edit it, then resize using its bottom-right handle.');
@@ -440,7 +455,7 @@ export default function App() {
           const uploadedFont = fontAssets[annotation.font];
           embedded = uploadedFont
             ? await pdf.embedFont(uploadedFont, { subset: true })
-            : await pdf.embedFont(PDF_FONT[annotation.font] || StandardFonts.Helvetica);
+            : await pdf.embedFont(fontStyleFor(annotation));
           embeddedFonts.set(annotation.font, embedded);
         }
         const x = annotation.x * width;
@@ -476,7 +491,13 @@ export default function App() {
           if (current) wrapped.push(current);
         }
         wrapped.slice(0, maxLines).forEach((line, index) => {
-          if (line) target.drawText(line, { x: x + inset, y: height - top - size - index * lineHeight, size, font: embedded, color });
+          if (!line) return;
+          const lineWidth = embedded.widthOfTextAtSize(line, size);
+          const align = annotation.align || 'left';
+          const alignedX = align === 'center' ? x + inset + Math.max(0,(maxWidth-lineWidth)/2) : align === 'right' ? x + inset + Math.max(0,maxWidth-lineWidth) : x + inset;
+          const lineY = height - top - size - index * lineHeight;
+          target.drawText(line, { x: alignedX, y: lineY, size, font: embedded, color });
+          if (annotation.underline) target.drawLine({ start:{x:alignedX,y:lineY-1.5}, end:{x:alignedX+lineWidth,y:lineY-1.5}, thickness:0.6, color });
         });
       }
       const commentFont = await pdf.embedFont(StandardFonts.Helvetica);
@@ -554,7 +575,7 @@ export default function App() {
         </div></div>
         {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
           <canvas ref={canvasRef}/>
-          {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
+          {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
             <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
             {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge => <button key={edge} type="button" aria-label={'Resize text box ' + edge} className={'resize-handle resize-' + edge} onPointerDown={event => beginResize(event, a, edge)} />)}
             <span className="resize-label">Drag any edge or corner to resize</span>
