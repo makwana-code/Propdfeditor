@@ -280,7 +280,7 @@ export default function App() {
   const resizeRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
-  const activeStyle = TEXT_STYLES.find(style => style.id === (selected?.styleId || activeStyleId)) || TEXT_STYLES[6];
+  const activeStyle = selected ? { font:selected.font, size:selected.size, color:selected.color, bold:selected.bold||false, italic:selected.italic||false, align:selected.align||'left' } : (TEXT_STYLES.find(style => style.id === activeStyleId) || TEXT_STYLES[6]);
 
   function applyTextStyle(styleId: string) {
     const preset = TEXT_STYLES.find(style => style.id === styleId);
