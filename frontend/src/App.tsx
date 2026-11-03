@@ -18,7 +18,8 @@ const PDF_FONT: Record<string, string> = {
   'Book Antiqua': StandardFonts.TimesRoman, 'Courier New': StandardFonts.Courier
 };
 type PdfDocument = { file: File; bytes: ArrayBuffer; pages: number };
-const TEXT_STYLES = [
+type TextStyle = { id: string; label: string; font: string; size: number; color: string; bold: boolean; italic: boolean; underline: boolean; align: 'left' | 'center' | 'right' };
+const TEXT_STYLES: TextStyle[] = [
   {
     "id": "title",
     "label": "Title",
@@ -280,7 +281,7 @@ export default function App() {
   const resizeRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
-  const activeStyle = selected ? { font:selected.font, size:selected.size, color:selected.color, bold:selected.bold||false, italic:selected.italic||false, align:selected.align||'left' } : (TEXT_STYLES.find(style => style.id === activeStyleId) || TEXT_STYLES[6]);
+  const activeStyle: TextStyle = selected ? { id: selected.styleId || activeStyleId, label: TEXT_STYLES.find(style => style.id === selected.styleId)?.label || 'Custom', font:selected.font, size:selected.size, color:selected.color, bold:selected.bold||false, italic:selected.italic||false, underline:selected.underline||false, align:selected.align||'left' } : (TEXT_STYLES.find(style => style.id === activeStyleId) || TEXT_STYLES[6]);
 
   function applyTextStyle(styleId: string) {
     const preset = TEXT_STYLES.find(style => style.id === styleId);
