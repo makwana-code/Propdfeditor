@@ -219,7 +219,7 @@ export default function App() {
       <article className="viewer">
         <div className="viewbar"><span title={document?.file.name}>{document?.file.name||'No document opened'}</span><div className="view-actions">
           <button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>‹</button><span>{page} / {document?.pages||0}</span><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>›</button><i/>
-          <button disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button><span className="zoom-value">{zoom}%</span><button disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button><button disabled={!document} onClick={()=>setZoom(fitZoom)}>Fit</button>
+          <button disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button><span className="zoom-value">{Math.round(fitZoom*zoom/100)}%</span><button disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button><button disabled={!document} onClick={()=>setZoom(100)}>Fit</button>
         </div></div>
         {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
           <canvas ref={canvasRef}/>
