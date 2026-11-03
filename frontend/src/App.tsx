@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react';
 import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
 
-const API = (import.meta.env.VITE_API_URL || 'http://localhost:4000/api').replace(/\/$/, '');
+const API = (((import.meta as any).env?.VITE_API_URL) || 'http://localhost:4000/api').replace(/\/$/, '');
 const FONTS = ['Arial','Arial Narrow','Calibri','Calibri Light','Aptos','Aptos Display','Times New Roman','Cambria','Georgia','Verdana','Tahoma','Trebuchet MS','Courier New','Garamond','Book Antiqua','Century Gothic'];
 const FONT_MAP: Record<string,string> = {'Times New Roman':StandardFonts.TimesRoman,'Cambria':StandardFonts.TimesRoman,'Georgia':StandardFonts.TimesRoman,'Garamond':StandardFonts.TimesRoman,'Book Antiqua':StandardFonts.TimesRoman,'Courier New':StandardFonts.Courier};
 type PdfInfo = { file: File; url: string; pages: number };
@@ -57,7 +57,7 @@ export default function App() {
         }
       }
       const output = await pdf.save();
-      const blob = new Blob([output], { type: 'application/pdf' });
+      const blob = new Blob([output as unknown as BlobPart], { type: 'application/pdf' });
       const downloadUrl = URL.createObjectURL(blob);
       const anchor = window.document.createElement('a');
       anchor.href = downloadUrl; anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '');
@@ -91,7 +91,7 @@ export default function App() {
         const pages = await merged.copyPages(source, source.getPageIndices());
         pages.forEach(p => merged.addPage(p));
       }
-      const url = URL.createObjectURL(new Blob([await merged.save()], { type: 'application/pdf' }));
+      const url = URL.createObjectURL(new Blob([await merged.save() as unknown as BlobPart], { type: 'application/pdf' }));
       const anchor = window.document.createElement('a'); anchor.href = url; anchor.download = 'merged.pdf'; anchor.click(); URL.revokeObjectURL(url);
       setStatus('Merged ' + mergeFiles.length + ' PDF files successfully.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'PDF merge failed.'); }
