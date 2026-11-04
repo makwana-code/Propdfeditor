@@ -116,14 +116,20 @@
 
 /* Functional PDF navigation panels and selectable original PDF text */
 .nav-results{display:flex;flex-direction:column;gap:8px;padding:10px;overflow:auto;max-height:100%;font-size:12px}.nav-results>b{font-size:13px;color:#233b5a}.nav-results>button{display:flex;flex-direction:column;align-items:flex-start;gap:3px;padding:8px;border:1px solid #dbe4f0;border-radius:6px;background:#fff;color:#28415f;text-align:left;cursor:pointer;white-space:normal}.nav-results>button:hover{border-color:#3479c5;background:#f2f7ff}.nav-results small{color:#8190a3}.nav-results p{color:#8290a3;line-height:1.5}.search-inline{display:flex;gap:5px}.search-inline input{min-width:0;width:100%;padding:7px;border:1px solid #cbd6e4;border-radius:5px}.search-inline button{padding:6px 9px;border:1px solid #b7c9e0;border-radius:5px;background:#eaf2fc;color:#235b9e;cursor:pointer}
-.source-text-hit{position:absolute;z-index:2;padding:0;border:1px solid transparent;background:transparent;cursor:text}.source-text-hit:hover{border:1px dashed #2876cf;background:#2c7dd018}.pdf-annotation.source-text-edit textarea{background:#fff!important;box-shadow:0 0 0 1px #2d75bd;}
+.source-text-hit{position:absolute;z-index:2;padding:0;border:1px solid transparent;background:transparent;cursor:text}.source-text-hit:hover{border:1px dashed #2876cf;background:#2c7dd018}.pdf-annotation.source-text-edit{background:#fff!important;border:0!important;box-shadow:none!important}
+.pdf-annotation.source-text-edit textarea{background:transparent!important;box-shadow:none!important;border:0!important;padding:0!important;outline:none!important;resize:none!important;overflow:hidden!important}
+.pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8;outline-offset:1px}
+.pdf-annotation.source-text-edit.selected textarea{cursor:text}
+.pdf-annotation.source-text-edit .resize-handle{display:none}
+.pdf-annotation.source-text-edit .resize-label{display:none}
 
 
 /* Continuous all-pages PDF browsing mode */
 .continuous-pdf-view{display:block;width:100%;height:100%;min-height:520px;border:0;background:#e9edf5}
 
 /* Reliable source-text replacement and comment placement */
-.pdf-annotation.source-text-edit{background:#fff!important;isolation:isolate;z-index:7;box-shadow:0 0 0 1px #fff}
-.pdf-annotation.source-text-edit textarea{background:#fff!important;opacity:1!important;mix-blend-mode:normal;}
+.pdf-annotation.source-text-edit{background:#fff!important;isolation:isolate;z-index:7;box-shadow:none!important;border:0!important}
+.pdf-annotation.source-text-edit textarea{background:transparent!important;opacity:1!important;mix-blend-mode:normal;border:0!important;box-shadow:none!important;padding:0!important;resize:none!important;overflow:hidden!important}
+.pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8;outline-offset:1px}
 .comment-placement-layer{position:absolute;inset:0;z-index:20;background:transparent;cursor:crosshair;touch-action:manipulation;pointer-events:none}
 .comment-placement-layer::after{content:'Click to place comment';position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:6px 10px;border-radius:5px;background:#fff8e8;border:1px solid #e6c58e;color:#855a18;font:11px Arial,sans-serif;box-shadow:0 2px 8px #17243b20;pointer-events:none}
