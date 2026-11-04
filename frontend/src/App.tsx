@@ -269,6 +269,8 @@ export default function App() {
   const [document, setDocument] = useState<PdfDocument | null>(null);
   const [cloudUser, setCloudUser] = useState<{id:string;email?:string}|null>(null);
   const [page, setPage] = useState(1);
+  const [continuousView, setContinuousView] = useState(false);
+  const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
   const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'>('select');
@@ -305,6 +307,13 @@ export default function App() {
   const moveRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
+  useEffect(() => {
+    if (!document) { setContinuousUrl(''); return; }
+    const url = URL.createObjectURL(new Blob([document.bytes], { type: 'application/pdf' }));
+    setContinuousUrl(url);
+    return () => URL.revokeObjectURL(url);
+  }, [document]);
+
   useEffect(() => {
     if (!supabase) return;
     void supabase.auth.getSession().then(({data}) => setCloudUser(data.session?.user ? {id:data.session.user.id,email:data.session.user.email} : null));
@@ -795,6 +804,7 @@ export default function App() {
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('comment');setStatus('Write a comment in the properties panel, then click the PDF page.')}}>▱ Comment</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
+      <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
       <input className="toolbar-color" aria-label="Drawing colour" type="color" value={drawColor} onChange={e=>setDrawColor(e.target.value)}/>
@@ -839,7 +849,7 @@ export default function App() {
 
       <article className="studio-viewer">
         <div className="studio-scroll">
-          {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
+          {document ? (continuousView && continuousUrl ? <iframe className="continuous-pdf-view" title="Continuous PDF pages" src={continuousUrl+'#toolbar=1&navpanes=0&view=FitH'} /> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {tool==='edit' ? textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
@@ -851,7 +861,7 @@ export default function App() {
             </div>)}
             <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
             {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>)}
-          </div></div> : <div className="studio-empty">
+          </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
             <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
             <label className="choose-pdf"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Choose a PDF</label>
