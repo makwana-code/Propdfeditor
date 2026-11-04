@@ -550,8 +550,11 @@ export default function App() {
     // PDF text extraction often returns tightly-bounded glyph runs. Expand the
     // white replacement area so descenders, antialiasing and adjacent glyphs
     // from the original canvas are fully hidden while editing and on export.
-    const padX = Math.max(.012, Math.min(.05, hit.h * .9));
-    const padY = Math.max(.008, Math.min(.025, hit.h * .55));
+    // Use a generous opaque mask around the extracted glyph run. PDF.js
+    // text bounds can be narrower than the actual painted glyphs, so a tight
+    // box leaves the original characters visible beside the replacement.
+    const padX = Math.max(.025, Math.min(.09, hit.h * 2.2));
+    const padY = Math.max(.018, Math.min(.045, hit.h * 1.25));
     const boxX = Math.max(0, hit.x - padX);
     const boxY = Math.max(0, hit.y - padY);
     const boxW = Math.min(1 - boxX, Math.max(.04, hit.w + padX * 2));
@@ -823,7 +826,6 @@ export default function App() {
       <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select / Move mode: select boxes and drag the Move handle. Text content is locked in this mode.')}}>↖ Select / Move</button>
       <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click a highlighted text area or an existing text box, then type.')}}>✎ Edit Text</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
-      <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('comment');setStatus('Write a comment in the properties panel, then click the PDF page.')}}>▱ Comment</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
