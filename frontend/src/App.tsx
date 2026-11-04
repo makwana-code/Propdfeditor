@@ -568,14 +568,16 @@ export default function App() {
   }
 
   function addCommentAt(point: {x:number;y:number}) {
-    if (!commentDraft.trim()) {
-      setStatus('Write your comment in the right panel first, then choose Place on page.');
+    const text = commentDraft.trim();
+    if (!text) {
+      setStatus('Write your comment in the right panel first, then click the PDF page to place it.');
       return;
     }
-    setComments(old => [...old, { id: crypto.randomUUID(), page, x: point.x, y: point.y, text: commentDraft.trim() }]);
+    const comment: PdfComment = { id: crypto.randomUUID(), page, x: point.x, y: point.y, text };
+    setComments(old => [...old, comment]);
     setCommentDraft('');
     setTool('select');
-    setStatus('Comment placed on page ' + page + '. It will be included when you download the edited PDF.');
+    setStatus('Comment added at the selected position on page ' + page + '. It will appear in the editor and exported PDF.');
   }
 
   async function runOcr() {
@@ -714,15 +716,11 @@ export default function App() {
       for (const comment of comments) {
         const target = pdf.getPage(comment.page - 1);
         const { width, height } = target.getSize();
-        const pageComments = comments.filter(item => item.page === comment.page);
-        const index = pageComments.findIndex(item => item.id === comment.id);
-        const cardTop = Math.min(0.88, 0.04 + index * 0.12);
         const cardWidth = width * 0.24;
         const cardHeight = Math.max(34, height * 0.075);
-        const cardX = width * 0.74;
-        const cardTopY = height * (1 - cardTop);
-        const cardY = cardTopY - cardHeight;
         const anchor = { x: comment.x * width, y: height - comment.y * height };
+        const cardX = Math.max(4, Math.min(width - cardWidth - 4, anchor.x + width * 0.025));
+        const cardY = Math.max(4, Math.min(height - cardHeight - 4, anchor.y - cardHeight / 2));
         const connectorEnd = { x: cardX, y: cardY + cardHeight / 2 };
         const commentColor = rgb(0.82, 0.54, 0.15);
         target.drawLine({ start: anchor, end: connectorEnd, thickness: 1.4, color: commentColor });
@@ -883,8 +881,7 @@ export default function App() {
               <span className="resize-label">Drag to resize</span>
             </div>)}
             <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
-            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
-            {tool==='comment' && <div className="comment-placement-layer" role="button" aria-label="Click to place comment" title="Click to place your comment" onClick={event=>{event.stopPropagation();const point=normalizedPoint(event);if(point)addCommentAt(point);}}/>}
+            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,Math.max(2,c.y*100))+'%',left:Math.min(72,Math.max(2,c.x*100))+'%'}}><b>Comment {i+1}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
             <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
@@ -909,7 +906,7 @@ export default function App() {
           <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
           <label htmlFor="font-upload">Embed licensed font (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());const family=selected?.font||font;const fontUrl=URL.createObjectURL(file);const face=new FontFace(family,'url('+fontUrl+')');await face.load();window.document.fonts.add(face);URL.revokeObjectURL(fontUrl);setFontAssets(old=>({...old,[family]:bytes}));setStatus(file.name+' loaded and will be embedded in exported PDFs.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/>
           <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
-          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>addCommentAt({x:.5,y:.5})}>＋ Add comment</button><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool("comment");setStatus("Comment placement active: click anywhere on the PDF page to anchor the comment.");}}>Place on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
+          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool('comment');setStatus('Comment ready: click the exact position on the PDF page to place it.');}}>＋ Place comment on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
         </div>
       </aside>
     </section>
