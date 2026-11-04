@@ -550,8 +550,8 @@ export default function App() {
     // PDF text extraction often returns tightly-bounded glyph runs. Expand the
     // white replacement area so descenders, antialiasing and adjacent glyphs
     // from the original canvas are fully hidden while editing and on export.
-    const padX = Math.max(.006, Math.min(.035, hit.h * .65));
-    const padY = Math.max(.004, Math.min(.018, hit.h * .32));
+    const padX = Math.max(.012, Math.min(.05, hit.h * .9));
+    const padY = Math.max(.008, Math.min(.025, hit.h * .55));
     const boxX = Math.max(0, hit.x - padX);
     const boxY = Math.max(0, hit.y - padY);
     const boxW = Math.min(1 - boxX, Math.max(.04, hit.w + padX * 2));
@@ -564,7 +564,7 @@ export default function App() {
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
     setTool('edit');
-    setStatus('Original text is covered for replacement. Select the text inside the white box and type your replacement.');
+    setStatus('Original text is masked. The existing text is selected—type to replace it in the same position.');
   }
 
   function addCommentAt(point: {x:number;y:number}) {
@@ -878,7 +878,7 @@ export default function App() {
             {tool==='edit' ? textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
               {tool==='select' && <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>}
-              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={()=>setSelectedId(a.id)} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#fff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
+              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#fff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
