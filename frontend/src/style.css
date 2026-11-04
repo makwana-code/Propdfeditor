@@ -111,3 +111,5 @@
 .thumbnail-empty{margin-top:16px;text-align:center;color:#9aa8ba;font-size:11px;line-height:1.6}
 @media(max-width:1050px){.studio-workspace{grid-template-columns:64px 94px minmax(0,1fr) 300px}}
 @media(max-width:720px){.studio-workspace{grid-template-columns:48px 82px minmax(0,1fr);grid-template-rows:minmax(480px,65vh) auto}.studio-thumbnails{grid-column:2;grid-row:1}.studio-viewer{grid-column:3;grid-row:1}.studio-properties{grid-column:1/-1}}
+
+.move-text-handle{position:absolute;left:0;top:-22px;z-index:9;padding:2px 7px!important;margin:0!important;width:auto!important;height:19px;border:1px solid #2e70bb!important;border-radius:4px 4px 0 0!important;background:#2e70bb!important;color:#fff!important;font:10px Arial,sans-serif;cursor:grab;opacity:0;white-space:nowrap}.pdf-annotation.selected .move-text-handle{opacity:1}.move-text-handle:active{cursor:grabbing}
