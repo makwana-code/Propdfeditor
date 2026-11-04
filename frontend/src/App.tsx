@@ -521,7 +521,7 @@ export default function App() {
 
   function handleStageClick(event: MouseEvent<HTMLDivElement>) {
     if (tool === 'draw') return;
-    if ((event.target as HTMLElement).closest('.pdf-annotation, .comment-pin, .comment-note')) return;
+    if ((event.target as HTMLElement).closest('.pdf-annotation, .comment-pin, .comment-note, button, textarea, input')) return;
     const point = normalizedPoint(event);
     if (!point) return;
     if (tool === 'text') {
@@ -542,7 +542,7 @@ export default function App() {
   function editExistingText(hit: PdfTextHit) {
     const id = crypto.randomUUID();
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
-    const annotation:TextAnnotation={id,page:hit.page,text:hit.text,x:hit.x,y:hit.y,w:Math.max(.06,Math.min(.95,hit.w*1.2)),h:Math.max(.025,Math.min(.3,hit.h*1.6)),font:style.font,size:Math.max(6,Math.min(36,hit.fontSize)),color:'#222222',styleId:'body',coverOriginal:true};
+    const padX=Math.min(.012,Math.max(.003,hit.h*.18)); const padY=Math.min(.008,Math.max(.002,hit.h*.12)); const boxX=Math.max(0,hit.x-padX); const boxY=Math.max(0,hit.y-padY); const annotation:TextAnnotation={id,page:hit.page,text:hit.text,x:boxX,y:boxY,w:Math.min(1-boxX,Math.max(.025,hit.w+padX*2)),h:Math.min(1-boxY,Math.max(.018,hit.h+padY*2)),font:style.font,size:Math.max(6,Math.min(36,hit.fontSize)),color:'#222222',styleId:'body',coverOriginal:true};
     setAnnotations(old=>[...old,annotation]); setSelectedId(id); setTool('select'); setStatus('Original text selected. Edit it in the text box; export replaces the covered original with your new text.');
   }
 
@@ -818,7 +818,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
       <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
-      <button className="toolbar-button" onClick={()=>setStatus('Cloud saving is not connected in this version.')}>☁ Save to cloud</button>
+      
     </nav>
 
     <section className="studio-workspace">
@@ -844,11 +844,11 @@ export default function App() {
             {textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) }
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
               <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>
-              <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
+              <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>{e.stopPropagation();setSelectedId(a.id)}} onFocus={()=>setSelectedId(a.id)} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#fff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
-            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none">{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
+            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
             {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>)}
           </div></div> : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
@@ -874,7 +874,7 @@ export default function App() {
           <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
           <label htmlFor="font-upload">Embed licensed font (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());const family=selected?.font||font;const fontUrl=URL.createObjectURL(file);const face=new FontFace(family,'url('+fontUrl+')');await face.load();window.document.fonts.add(face);URL.revokeObjectURL(fontUrl);setFontAssets(old=>({...old,[family]:bytes}));setStatus(file.name+' loaded and will be embedded in exported PDFs.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/>
           <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
-          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write a comment, then select a point on the PDF…"/><small>{comments.length} comment(s)</small>
+          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{const id=crypto.randomUUID();setComments(old=>[...old,{id,page,x:.5,y:.5,text:commentDraft.trim()}]);setCommentDraft("");setStatus("Comment added at the centre of page "+page+".");}}>＋ Add comment</button><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool("comment");setStatus("Click the exact location on the PDF page to place your comment.");}}>Place on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
         </div>
       </aside>
     </section>
