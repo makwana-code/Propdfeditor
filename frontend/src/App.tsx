@@ -271,7 +271,7 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
-  const [tool, setTool] = useState<'select'|'text'|'comment'|'draw'>('select');
+  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'>('select');
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [comments, setComments] = useState<PdfComment[]>([]);
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
@@ -528,8 +528,8 @@ export default function App() {
       const id = crypto.randomUUID();
       setAnnotations(old => [...old, { id, page, text: 'Type here', x: point.x, y: point.y, w: .34, h: .12, font, size: fontSize, color: fontColor, styleId: activeStyle.id, bold: activeStyle.bold, italic: activeStyle.italic, underline: activeStyle.underline, align: activeStyle.align }]);
       setSelectedId(id);
-      setTool('select');
-      setStatus('Text box added. Edit it, then resize using its bottom-right handle.');
+      setTool('edit');
+      setStatus('Text box added. Type in Edit Text mode; use Select / Move to reposition it.');
     } else if (tool === 'comment') {
       if (!commentDraft.trim()) { setStatus('Write a comment in the right panel first.'); return; }
       setComments(old => [...old, { id: crypto.randomUUID(), page, x: point.x, y: point.y, text: commentDraft.trim() }]);
@@ -543,7 +543,7 @@ export default function App() {
     const id = crypto.randomUUID();
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
     const padX=Math.min(.012,Math.max(.003,hit.h*.18)); const padY=Math.min(.008,Math.max(.002,hit.h*.12)); const boxX=Math.max(0,hit.x-padX); const boxY=Math.max(0,hit.y-padY); const annotation:TextAnnotation={id,page:hit.page,text:hit.text,x:boxX,y:boxY,w:Math.min(1-boxX,Math.max(.025,hit.w+padX*2)),h:Math.min(1-boxY,Math.max(.018,hit.h+padY*2)),font:style.font,size:Math.max(6,Math.min(36,hit.fontSize)),color:'#222222',styleId:'body',coverOriginal:true};
-    setAnnotations(old=>[...old,annotation]); setSelectedId(id); setTool('select'); setStatus('Original text selected. Edit it in the text box; export replaces the covered original with your new text.');
+    setAnnotations(old=>[...old,annotation]); setSelectedId(id); setTool('edit'); setStatus('Text edit mode: click inside the selected text and type. Use Select / Move to reposition it.');
   }
 
   async function runOcr() {
@@ -790,8 +790,9 @@ export default function App() {
 
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
       <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
-      <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select a text box, edit its contents, or drag its Move handle.')}}>↖ Select / move</button>
-      <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a text box.')}}>T&nbsp; Add text</button>
+      <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select / Move mode: select boxes and drag the Move handle. Text content is locked in this mode.')}}>↖ Select / Move</button>
+      <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click a highlighted text area or an existing text box, then type.')}}>✎ Edit Text</button>
+      <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('comment');setStatus('Write a comment in the properties panel, then click the PDF page.')}}>▱ Comment</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
@@ -804,7 +805,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(x=>x.id!==selected.id));setSelectedId(null)}}}>▤ Remove</button>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button>
-      <span className="toolbar-page">{document? page+' / '+document.pages : '– / –'}</span>
+      <label className="toolbar-page">Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>OCR current page</button>
@@ -841,10 +842,10 @@ export default function App() {
           {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
-            {textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) }
+            {tool==='edit' ? textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
-              <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>
-              <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>{e.stopPropagation();setSelectedId(a.id)}} onFocus={()=>setSelectedId(a.id)} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#fff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
+              {tool==='select' && <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>}
+              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={()=>setSelectedId(a.id)} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#fff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
