@@ -4,6 +4,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
+import { createWorker } from 'tesseract.js';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -472,6 +473,23 @@ export default function App() {
     setAnnotations(old=>[...old,annotation]); setSelectedId(id); setTool('select'); setStatus('Original text selected. Edit it in the text box; export replaces the covered original with your new text.');
   }
 
+  async function runOcr() {
+    const canvas = canvasRef.current;
+    if (!document || !canvas) { setStatus('Open a PDF page before running OCR.'); return; }
+    setBusy(true); setStatus('Running OCR on page ' + page + '…');
+    let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
+    try {
+      worker = await createWorker('eng');
+      const result = await worker.recognize(canvas);
+      const text = result.data.text.trim();
+      if (!text) { setStatus('OCR completed: no readable text was detected on this page.'); return; }
+      setSearchQuery(text.split(/\\s+/).slice(0,8).join(' '));
+      setSearchResults([{page,text:text.slice(0,500)}]);
+      setActivePanel('search');
+      setStatus('OCR completed for page ' + page + '. Extracted text is shown in Search.');
+    } catch (error) { setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.'); }
+    finally { if (worker) await worker.terminate(); setBusy(false); }
+  }
   async function runSearch() {
     if (!pdfRef.current || !searchQuery.trim()) { setSearchResults([]); return; }
     const query=searchQuery.trim().toLowerCase(); const results:Array<{page:number;text:string}> = [];
@@ -678,6 +696,7 @@ export default function App() {
       <span className="toolbar-page">{document? page+' / '+document.pages : '– / –'}</span>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>OCR current page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
