@@ -133,3 +133,10 @@
 .pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8;outline-offset:1px}
 .comment-placement-layer{position:absolute;inset:0;z-index:20;background:transparent;cursor:crosshair;touch-action:manipulation;pointer-events:none}
 .comment-placement-layer::after{content:'Click to place comment';position:absolute;left:50%;top:12px;transform:translateX(-50%);padding:6px 10px;border-radius:5px;background:#fff8e8;border:1px solid #e6c58e;color:#855a18;font:11px Arial,sans-serif;box-shadow:0 2px 8px #17243b20;pointer-events:none}
+
+
+/* Inline source-text replacement: do not inherit the generic 50x25px text-box minimums. */
+.pdf-annotation.source-text-edit{min-width:0!important;min-height:0!important;padding:0!important;margin:0!important;overflow:visible!important;border:0!important;background:#fff!important;box-shadow:none!important;}
+.pdf-annotation.source-text-edit textarea{display:block!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;outline:0!important;resize:none!important;overflow:hidden!important;background:transparent!important;line-height:1.05!important;box-shadow:none!important;}
+.pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8!important;outline-offset:1px;}
+.pdf-annotation.source-text-edit .resize-handle,.pdf-annotation.source-text-edit .resize-label{display:none!important;}
