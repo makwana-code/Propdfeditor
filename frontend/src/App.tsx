@@ -296,6 +296,8 @@ export default function App() {
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Open a PDF to start editing.');
   const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'>('pages');
+  const [showLeftPanel, setShowLeftPanel] = useState(true);
+  const [showRightPanel, setShowRightPanel] = useState(true);
   const [bookmarks, setBookmarks] = useState<Array<{title:string; page:number}>>([]);
   const [textHits, setTextHits] = useState<PdfTextHit[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
@@ -547,20 +549,14 @@ export default function App() {
   function editExistingText(hit: PdfTextHit) {
     const id = crypto.randomUUID();
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
-    // PDF text extraction often returns tightly-bounded glyph runs. Expand the
-    // white replacement area so descenders, antialiasing and adjacent glyphs
-    // from the original canvas are fully hidden while editing and on export.
-    // Use a generous opaque mask around the extracted glyph run. PDF.js
-    // text bounds can be narrower than the actual painted glyphs, so a tight
-    // box leaves the original characters visible beside the replacement.
-    // Keep the replacement mask tight to the actual text run. A large
-    // padded rectangle looks like a white form field instead of inline editing.
-    const padX = Math.max(.0015, Math.min(.006, hit.h * .12));
-    const padY = Math.max(.001, Math.min(.004, hit.h * .08));
+    // Keep the replacement overlay anchored to the exact PDF.js text run.
+    // The previous minimum-width box created oversized white fields and caused overlap.
+    const padX = Math.min(.0018, hit.h * .06);
+    const padY = Math.min(.0012, hit.h * .04);
     const boxX = Math.max(0, hit.x - padX);
     const boxY = Math.max(0, hit.y - padY);
-    const boxW = Math.min(1 - boxX, Math.max(.04, hit.w + padX * 2));
-    const boxH = Math.min(1 - boxY, Math.max(.025, hit.h + padY * 2));
+    const boxW = Math.min(1 - boxX, Math.max(.008, hit.w + padX * 2));
+    const boxH = Math.min(1 - boxY, Math.max(.008, hit.h + padY * 2));
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
@@ -851,12 +847,15 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
+      <button className="toolbar-button" type="button" onClick={()=>setShowLeftPanel(v=>!v)}>{showLeftPanel?'Hide left panels':'Show left panels'}</button>
+      <button className="toolbar-button" type="button" onClick={()=>setShowRightPanel(v=>!v)}>{showRightPanel?'Hide right panel':'Show right panel'}</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
       <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
       
     </nav>
 
-    <section className="studio-workspace">
+    <section className="studio-workspace" style={{gridTemplateColumns:`${showLeftPanel?'82px 112px ':''}minmax(0,1fr)${showRightPanel?' 355px':''}`}}>
+      {showLeftPanel && <>
       <aside className="studio-pages">
         <button className={activePanel==='pages'?'side-tab active':'side-tab'} type="button" onClick={()=>setActivePanel('pages')}>▣<span>Pages</span></button>
         <button className={activePanel==='bookmarks'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('bookmarks')}>▤<span>Bookmarks</span></button>
@@ -870,6 +869,7 @@ export default function App() {
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
       </aside>
+      </>}
 
       <article className="studio-viewer">
         <div className="studio-scroll">
@@ -894,7 +894,7 @@ export default function App() {
         <div className="studio-statusbar"><span>{document?'Page '+page+' of '+document.pages:status}</span><div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
 
-      <aside className="studio-properties">
+      {showRightPanel && <aside className="studio-properties">
         <div className="property-heading"><b>Text Styles (20 styles)</b><span>⌃</span></div>
         <div className="style-grid">{TEXT_STYLES.map((style,i)=><button key={style.id} className={(selected?.styleId||activeStyleId)===style.id?'style-choice active':'style-choice'} onClick={()=>applyTextStyle(style.id)}><span>Aa</span><small>{i+1}. {style.label}</small></button>)}</div>
         <div className="property-heading size-heading"><b>↗　Text Box Size Controls</b><span>⌃</span></div>
@@ -906,11 +906,11 @@ export default function App() {
           <label htmlFor="font-family">Font family</label><select id="font-family" value={selected?.font||font} onChange={e=>{setFont(e.target.value);if(selected)updateAnnotation(selected.id,{font:e.target.value})}}>{FONT_FAMILIES.map(f=><option key={f} value={f}>{f}</option>)}</select>
           <label htmlFor="font-size">Font size (pt)</label><div className="format-size"><button onClick={()=>{const v=Math.max(6,(selected?.size||fontSize)-1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>−</button><input id="font-size" type="number" min="6" max="96" value={selected?.size||fontSize} onChange={e=>{const v=Math.max(6,Math.min(96,Number(e.target.value)||6));setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}/><button onClick={()=>{const v=Math.min(96,(selected?.size||fontSize)+1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>＋</button></div>
           <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
-          <label htmlFor="font-upload">Embed licensed font (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());const family=selected?.font||font;const fontUrl=URL.createObjectURL(file);const face=new FontFace(family,'url('+fontUrl+')');await face.load();window.document.fonts.add(face);URL.revokeObjectURL(fontUrl);setFontAssets(old=>({...old,[family]:bytes}));setStatus(file.name+' loaded and will be embedded in exported PDFs.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/>
+
           <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
           <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool('comment');setStatus('Comment ready: click the exact position on the PDF page to place it.');}}>＋ Place comment on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
         </div>
-      </aside>
+      </aside>}
     </section>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
