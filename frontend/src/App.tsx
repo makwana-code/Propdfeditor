@@ -593,7 +593,10 @@ export default function App() {
         <button className="side-tab" type="button" disabled>▤<span>Bookmarks</span></button>
         <button className="side-tab" type="button" disabled>☷<span>Outline</span></button>
         <button className="side-tab" type="button" disabled>⌕<span>Search</span></button>
-        {document&&<div className="page-mini-list"><button className="page-mini active" onClick={()=>setPage(1)}><span>PDF</span><b>1</b></button>{document.pages>1&&<button className="page-mini" onClick={()=>setPage(2)}><span>PDF</span><b>2</b></button>}<small>{document.pages} page(s)</small></div>}
+      </aside>
+
+      <aside className="studio-thumbnails" aria-label="PDF page thumbnails">
+        {document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><button key={index+1} className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button>)}<small>{document.pages} page(s)</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>}
       </aside>
 
       <article className="studio-viewer">
