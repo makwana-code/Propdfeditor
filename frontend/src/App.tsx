@@ -257,6 +257,8 @@ function fontStyleFor(annotation: TextAnnotation) {
 type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; text: string };
+type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
+type EditorSnapshot = { annotations: TextAnnotation[]; comments: PdfComment[]; strokes: DrawStroke[] };
 type ResizeSession = { id: string; edge: string; startX: number; startY: number; start: TextAnnotation; pageWidth: number; pageHeight: number };
 
 export default function App() {
@@ -264,9 +266,17 @@ export default function App() {
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
-  const [tool, setTool] = useState<'select'|'text'|'comment'>('select');
+  const [tool, setTool] = useState<'select'|'text'|'comment'|'draw'>('select');
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [comments, setComments] = useState<PdfComment[]>([]);
+  const [strokes, setStrokes] = useState<DrawStroke[]>([]);
+  const [drawColor, setDrawColor] = useState('#d62728');
+  const [drawWidth, setDrawWidth] = useState(2.5);
+  const drawingRef = useRef<DrawStroke | null>(null);
+  const undoRef = useRef<EditorSnapshot[]>([]);
+  const redoRef = useRef<EditorSnapshot[]>([]);
+  const lastSnapshotRef = useRef<EditorSnapshot | null>(null);
+  const applyingHistoryRef = useRef(false);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [font, setFont] = useState('Arial');
   const [fontSize, setFontSize] = useState(12);
@@ -289,6 +299,32 @@ export default function App() {
   const moveRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
+  const canUndo = undoRef.current.length > 0;
+  const canRedo = redoRef.current.length > 0;
+
+  useEffect(() => {
+    const current: EditorSnapshot = { annotations, comments, strokes };
+    if (!lastSnapshotRef.current) { lastSnapshotRef.current = current; return; }
+    if (applyingHistoryRef.current) { applyingHistoryRef.current = false; lastSnapshotRef.current = current; return; }
+    undoRef.current = [...undoRef.current.slice(-99), lastSnapshotRef.current];
+    redoRef.current = [];
+    lastSnapshotRef.current = current;
+  }, [annotations, comments, strokes]);
+
+  function undoEdit() {
+    const previous = undoRef.current.pop(); if (!previous) return;
+    const current: EditorSnapshot = { annotations, comments, strokes };
+    redoRef.current.push(current); applyingHistoryRef.current = true;
+    setAnnotations(previous.annotations); setComments(previous.comments); setStrokes(previous.strokes);
+    lastSnapshotRef.current = previous; setStatus('Last edit undone.');
+  }
+  function redoEdit() {
+    const next = redoRef.current.pop(); if (!next) return;
+    const current: EditorSnapshot = { annotations, comments, strokes };
+    undoRef.current.push(current); applyingHistoryRef.current = true;
+    setAnnotations(next.annotations); setComments(next.comments); setStrokes(next.strokes);
+    lastSnapshotRef.current = next; setStatus('Edit restored.');
+  }
   const activeStyle: TextStyle = selected ? { id: selected.styleId || activeStyleId, label: TEXT_STYLES.find(style => style.id === selected.styleId)?.label || 'Custom', font:selected.font, size:selected.size, color:selected.color, bold:selected.bold||false, italic:selected.italic||false, underline:selected.underline||false, align:selected.align||'left' } : (TEXT_STYLES.find(style => style.id === activeStyleId) || TEXT_STYLES[6]);
 
   function applyTextStyle(styleId: string) {
@@ -435,12 +471,12 @@ export default function App() {
       const entries:Array<{title:string;page:number}> = [];
       const visit = async (nodes:any[]) => { for (const node of nodes || []) { let target:any=node.dest; if (typeof target === 'string') target=await pdfView.getDestination(target); let targetPage=1; if (Array.isArray(target) && target[0]) { try { targetPage=(await pdfView.getPageIndex(target[0]))+1; } catch {} } entries.push({title:String(node.title||'Untitled bookmark'),page:targetPage}); if (node.items?.length) await visit(node.items); } };
       await visit(outline || []); setBookmarks(entries); setSearchResults([]); setTextHits([]);
-      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setSelectedId(null);
+      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setStrokes([]); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
       setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages');
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
 
-  function normalizedPoint(event: MouseEvent<HTMLDivElement>) {
+  function normalizedPoint(event: { clientX: number; clientY: number }) {
     const canvas = canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
@@ -448,6 +484,7 @@ export default function App() {
   }
 
   function handleStageClick(event: MouseEvent<HTMLDivElement>) {
+    if (tool === 'draw') return;
     if ((event.target as HTMLElement).closest('.pdf-annotation, .comment-pin, .comment-note')) return;
     const point = normalizedPoint(event);
     if (!point) return;
@@ -510,6 +547,24 @@ export default function App() {
     updateAnnotation(id, { w: Math.max(.08, Math.min(.95, rect.width / pageRect.width)), h: Math.max(.04, Math.min(.8, rect.height / pageRect.height)) });
   }
 
+  function beginDrawing(event: ReactPointerEvent<HTMLDivElement>) {
+    if (tool !== 'draw' || (event.target as HTMLElement).closest('.pdf-annotation,.comment-note')) return;
+    const point = normalizedPoint(event); if (!point) return;
+    event.preventDefault();
+    const stroke: DrawStroke = { id: crypto.randomUUID(), page, color: drawColor, width: drawWidth, points: [point] };
+    drawingRef.current = stroke; setStrokes(old => [...old, stroke]);
+    event.currentTarget.setPointerCapture(event.pointerId);
+  }
+  function continueDrawing(event: ReactPointerEvent<HTMLDivElement>) {
+    if (!drawingRef.current) return;
+    const point = normalizedPoint(event); if (!point) return;
+    const active = drawingRef.current;
+    const next = { ...active, points: [...active.points, point] };
+    drawingRef.current = next;
+    setStrokes(old => old.map(item => item.id === next.id ? next : item));
+  }
+  function finishDrawing() { drawingRef.current = null; }
+
   async function exportPdf() {
     if (!document) return;
     setBusy(true);
@@ -571,6 +626,14 @@ export default function App() {
           target.drawText(line, { x: alignedX, y: lineY, size, font: embedded, color });
           if (annotation.underline) target.drawLine({ start:{x:alignedX,y:lineY-1.5}, end:{x:alignedX+lineWidth,y:lineY-1.5}, thickness:0.6, color });
         });
+      }
+      for (const stroke of strokes) {
+        const target = pdf.getPage(stroke.page - 1); const { width, height } = target.getSize();
+        const color = rgb(parseInt(stroke.color.slice(1,3),16)/255, parseInt(stroke.color.slice(3,5),16)/255, parseInt(stroke.color.slice(5,7),16)/255);
+        for (let i=1;i<stroke.points.length;i++) {
+          const a=stroke.points[i-1], b=stroke.points[i];
+          target.drawLine({ start:{x:a.x*width,y:height-a.y*height}, end:{x:b.x*width,y:height-b.y*height}, thickness:stroke.width, color, opacity:1 });
+        }
       }
       const commentFont = await pdf.embedFont(StandardFonts.Helvetica);
       for (const comment of comments) {
@@ -687,6 +750,11 @@ export default function App() {
       <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select a text box, edit its contents, or drag its Move handle.')}}>↖ Select / move</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('comment');setStatus('Write a comment in the properties panel, then click the PDF page.')}}>▱ Comment</button>
+      <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
+      <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
+      <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
+      <input className="toolbar-color" aria-label="Drawing colour" type="color" value={drawColor} onChange={e=>setDrawColor(e.target.value)}/>
+      <select className="toolbar-select" aria-label="Drawing width" value={drawWidth} onChange={e=>setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option></select>
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
       <span className="toolbar-divider"/>
@@ -727,8 +795,9 @@ export default function App() {
 
       <article className="studio-viewer">
         <div className="studio-scroll">
-          {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
+          {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
+            <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) }
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
               <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>
