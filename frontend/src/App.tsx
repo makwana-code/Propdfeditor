@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { PDFDocument, StandardFonts, rgb } from 'pdf-lib';
+import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
@@ -583,9 +583,9 @@ export default function App() {
     if (!document) return;
     try {
       const pdf = await PDFDocument.load(document.bytes.slice(0)); const target = pdf.getPage(page - 1);
-      target.setRotation({ angle: (target.getRotation().angle + 90) % 360 }); const bytes = await pdf.save();
+      target.setRotation(degrees((target.getRotation().angle + 90) % 360)); const bytes = await pdf.save();
       const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
-      setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), pages: pdf.getPageCount() });
+      setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, pages: pdf.getPageCount() });
       setStatus('Page ' + page + ' rotated 90 degrees clockwise.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not rotate page.'); }
   }
