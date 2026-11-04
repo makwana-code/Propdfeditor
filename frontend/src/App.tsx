@@ -553,8 +553,10 @@ export default function App() {
     // Use a generous opaque mask around the extracted glyph run. PDF.js
     // text bounds can be narrower than the actual painted glyphs, so a tight
     // box leaves the original characters visible beside the replacement.
-    const padX = Math.max(.025, Math.min(.09, hit.h * 2.2));
-    const padY = Math.max(.018, Math.min(.045, hit.h * 1.25));
+    // Keep the replacement mask tight to the actual text run. A large
+    // padded rectangle looks like a white form field instead of inline editing.
+    const padX = Math.max(.0015, Math.min(.006, hit.h * .12));
+    const padY = Math.max(.001, Math.min(.004, hit.h * .08));
     const boxX = Math.max(0, hit.x - padX);
     const boxY = Math.max(0, hit.y - padY);
     const boxW = Math.min(1 - boxX, Math.max(.04, hit.w + padX * 2));
@@ -562,7 +564,7 @@ export default function App() {
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
-      color: '#222222', styleId: 'body', coverOriginal: true
+      color: '#222222', styleId: 'body', align: 'left', coverOriginal: true
     };
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
@@ -845,7 +847,6 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
-      <label className="toolbar-button open-file">＋ Choose PDFs<input type="file" accept="application/pdf,.pdf" multiple onChange={e=>{const files=Array.from(e.target.files||[]);setMergeFiles(files);setStatus(files.length>=2?files.length+' PDFs selected for merging.':'Select at least two PDFs.')}}/></label>
       <button className="toolbar-button" disabled={mergeFiles.length<2||busy} onClick={()=>void mergePdfs()}>Merge ({mergeFiles.length})</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
@@ -878,7 +879,7 @@ export default function App() {
             {tool==='edit' ? textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
               {tool==='select' && <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>}
-              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#fff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
+              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'transparent':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
@@ -887,7 +888,6 @@ export default function App() {
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
             <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
-            <label className="choose-pdf"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Choose a PDF</label>
             <span>or drop a file here</span>
           </div>}
         </div>
