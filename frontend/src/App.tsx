@@ -630,6 +630,7 @@ export default function App() {
 
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
       <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
+      <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select a text box, edit its contents, or drag its Move handle.')}}>↖ Select / move</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('comment');setStatus('Write a comment in the properties panel, then click the PDF page.')}}>▱ Comment</button>
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
@@ -641,6 +642,11 @@ export default function App() {
       <span className="toolbar-page">{document? page+' / '+document.pages : '– / –'}</span>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
+      <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
+      <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
+      <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
+      <label className="toolbar-button open-file">＋ Choose PDFs<input type="file" accept="application/pdf,.pdf" multiple onChange={e=>{const files=Array.from(e.target.files||[]);setMergeFiles(files);setStatus(files.length>=2?files.length+' PDFs selected for merging.':'Select at least two PDFs.')}}/></label>
+      <button className="toolbar-button" disabled={mergeFiles.length<2||busy} onClick={()=>void mergePdfs()}>Merge ({mergeFiles.length})</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
