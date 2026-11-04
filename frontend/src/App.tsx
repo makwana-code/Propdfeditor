@@ -5,6 +5,10 @@ import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 import { createWorker } from 'tesseract.js';
+import { createClient } from '@supabase/supabase-js';
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
+const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
+const supabase = supabaseUrl && supabaseKey ? createClient(supabaseUrl, supabaseKey) : null;
 
 pdfjs.GlobalWorkerOptions.workerSrc = workerUrl;
 
@@ -263,6 +267,7 @@ type ResizeSession = { id: string; edge: string; startX: number; startY: number;
 
 export default function App() {
   const [document, setDocument] = useState<PdfDocument | null>(null);
+  const [cloudUser, setCloudUser] = useState<{id:string;email?:string}|null>(null);
   const [page, setPage] = useState(1);
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
@@ -300,6 +305,35 @@ export default function App() {
   const moveRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
+  useEffect(() => {
+    if (!supabase) return;
+    void supabase.auth.getSession().then(({data}) => setCloudUser(data.session?.user ? {id:data.session.user.id,email:data.session.user.email} : null));
+    const {data:{subscription}} = supabase.auth.onAuthStateChange((_event,session) => setCloudUser(session?.user ? {id:session.user.id,email:session.user.email} : null));
+    return () => subscription.unsubscribe();
+  }, []);
+  async function signInOrUp() {
+    if (!supabase) { setStatus('Cloud service is not configured.'); return; }
+    const email = window.prompt('Enter your email address:'); if (!email) return;
+    const password = window.prompt('Enter your password (minimum 6 characters):'); if (!password) return;
+    try { setBusy(true); const createAccount = window.confirm('OK creates a new account; Cancel signs in.'); const result = createAccount ? await supabase.auth.signUp({email,password}) : await supabase.auth.signInWithPassword({email,password}); if (result.error) throw result.error; setStatus(createAccount && !result.data.session ? 'Account created. Check your email to confirm it.' : 'Signed in to ProPDF Cloud.'); }
+    catch(error) { setStatus(error instanceof Error ? error.message : 'Authentication failed.'); } finally { setBusy(false); }
+  }
+  async function saveToCloud() {
+    if (!document) { setStatus('Open a PDF before saving to cloud.'); return; }
+    if (!supabase) { setStatus('Cloud service is not configured.'); return; }
+    if (!cloudUser) { await signInOrUp(); return; }
+    if (document.bytes.byteLength > 50*1024*1024) { setStatus('PDF exceeds the 50 MB cloud limit.'); return; }
+    setBusy(true); setStatus('Saving PDF and edit progress to your private cloud…');
+    try { const safeName=document.file.name.replace(/[^a-zA-Z0-9._-]/g,'_'); const path=cloudUser.id+'/'+crypto.randomUUID()+'-'+safeName; const upload=await supabase.storage.from('pdf-documents').upload(path,new Blob([document.bytes.slice(0)],{type:'application/pdf'}),{contentType:'application/pdf'}); if(upload.error) throw upload.error; const record=await supabase.from('saved_documents').insert({user_id:cloudUser.id,file_name:document.file.name,storage_path:path,file_size:document.bytes.byteLength,editor_state:{page,zoom,annotations,comments,strokes}}); if(record.error) { await supabase.storage.from('pdf-documents').remove([path]); throw record.error; } setStatus('Saved privately to ProPDF Cloud with your current edits.'); }
+    catch(error) { setStatus(error instanceof Error ? 'Cloud save failed: '+error.message : 'Cloud save failed.'); } finally { setBusy(false); }
+  }
+  async function openFromCloud() {
+    if (!supabase || !cloudUser) { await signInOrUp(); return; }
+    setBusy(true);
+    try { const {data,error}=await supabase.from('saved_documents').select('file_name,storage_path,editor_state,created_at').order('created_at',{ascending:false}).limit(30); if(error) throw error; if(!data?.length) { setStatus('No cloud documents found.'); return; } const promptText='Choose document number:\n'+data.map((item,index)=>(index+1)+'. '+item.file_name+' — '+new Date(item.created_at).toLocaleString()).join('\n'); const choice=window.prompt(promptText,'1'); if(choice===null) return; const record=data[Number(choice)-1]; if(!record) throw new Error('Invalid document number.'); const downloaded=await supabase.storage.from('pdf-documents').download(record.storage_path); if(downloaded.error) throw downloaded.error; await openPdf(new File([downloaded.data],record.file_name,{type:'application/pdf'})); const state=record.editor_state as any; setAnnotations(state.annotations||[]); setComments(state.comments||[]); setStrokes(state.strokes||[]); if(state.page) setPage(state.page); if(state.zoom) setZoom(state.zoom); setStatus('Loaded '+record.file_name+' from your private cloud.'); }
+    catch(error) { setStatus(error instanceof Error ? 'Cloud open failed: '+error.message : 'Cloud open failed.'); } finally { setBusy(false); }
+  }
+  async function signOutCloud() { if(!supabase) return; const {error}=await supabase.auth.signOut(); setStatus(error ? error.message : 'Signed out of ProPDF Cloud.'); }
   const canUndo = undoRef.current.length > 0;
   const canRedo = redoRef.current.length > 0;
 
@@ -751,7 +785,7 @@ export default function App() {
   return <main className="app-shell pdf-studio">
     <header className="studio-header">
       <div className="brand"><span className="logo">P</span><div><b>ProPDF Studio</b><small>Edit PDFs in your browser</small></div></div>
-      <button className="sign-in" type="button" onClick={()=>setStatus('Sign-in and cloud sync are not configured yet.')}>Sign in</button>
+      <div className="cloud-account">{cloudUser ? <><span>{cloudUser.email || "Signed in"}</span><button className="sign-in" type="button" onClick={()=>void openFromCloud()}>My cloud files</button><button className="sign-in" type="button" onClick={()=>void signOutCloud()}>Sign out</button></> : <button className="sign-in" type="button" onClick={()=>void signInOrUp()}>Sign in</button>}</div>
     </header>
 
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
@@ -782,7 +816,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
-      <button className="toolbar-button" onClick={()=>setStatus('Comments: '+comments.length+' in this document session.')}>▢ Comments ({comments.length})</button>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
       <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
       <button className="toolbar-button" onClick={()=>setStatus('Cloud saving is not connected in this version.')}>☁ Save to cloud</button>
     </nav>
