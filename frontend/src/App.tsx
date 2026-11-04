@@ -315,7 +315,7 @@ export default function App() {
     if (!supabase) { setStatus('Cloud service is not configured.'); return; }
     const email = window.prompt('Enter your email address:'); if (!email) return;
     const password = window.prompt('Enter your password (minimum 6 characters):'); if (!password) return;
-    try { setBusy(true); const createAccount = window.confirm('OK creates a new account; Cancel signs in.'); const result = createAccount ? await supabase.auth.signUp({email,password}) : await supabase.auth.signInWithPassword({email,password}); if (result.error) throw result.error; setStatus(createAccount && !result.data.session ? 'Account created. Check your email to confirm it.' : 'Signed in to ProPDF Cloud.'); }
+    try { setBusy(true); const createAccount = window.confirm('OK creates a new account; Cancel signs in.'); const result = createAccount ? await supabase.auth.signUp({email,password,options:{emailRedirectTo:window.location.origin}}) : await supabase.auth.signInWithPassword({email,password}); if (result.error) throw result.error; setStatus(createAccount && !result.data.session ? 'Account created. Check your email to confirm it.' : 'Signed in to ProPDF Cloud.'); }
     catch(error) { setStatus(error instanceof Error ? error.message : 'Authentication failed.'); } finally { setBusy(false); }
   }
   async function saveToCloud() {
