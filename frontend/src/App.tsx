@@ -540,19 +540,42 @@ export default function App() {
       setTool('edit');
       setStatus('Text box added. Type in Edit Text mode; use Select / Move to reposition it.');
     } else if (tool === 'comment') {
-      if (!commentDraft.trim()) { setStatus('Write a comment in the right panel first.'); return; }
-      setComments(old => [...old, { id: crypto.randomUUID(), page, x: point.x, y: point.y, text: commentDraft.trim() }]);
-      setCommentDraft('');
-      setTool('select');
-      setStatus('Comment anchored to the selected PDF location.');
+      addCommentAt(point);
     }
   }
 
   function editExistingText(hit: PdfTextHit) {
     const id = crypto.randomUUID();
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
-    const padX=Math.min(.012,Math.max(.003,hit.h*.18)); const padY=Math.min(.008,Math.max(.002,hit.h*.12)); const boxX=Math.max(0,hit.x-padX); const boxY=Math.max(0,hit.y-padY); const annotation:TextAnnotation={id,page:hit.page,text:hit.text,x:boxX,y:boxY,w:Math.min(1-boxX,Math.max(.025,hit.w+padX*2)),h:Math.min(1-boxY,Math.max(.018,hit.h+padY*2)),font:style.font,size:Math.max(6,Math.min(36,hit.fontSize)),color:'#222222',styleId:'body',coverOriginal:true};
-    setAnnotations(old=>[...old,annotation]); setSelectedId(id); setTool('edit'); setStatus('Text edit mode: click inside the selected text and type. Use Select / Move to reposition it.');
+    // PDF text extraction often returns tightly-bounded glyph runs. Expand the
+    // white replacement area so descenders, antialiasing and adjacent glyphs
+    // from the original canvas are fully hidden while editing and on export.
+    const padX = Math.max(.006, Math.min(.035, hit.h * .65));
+    const padY = Math.max(.004, Math.min(.018, hit.h * .32));
+    const boxX = Math.max(0, hit.x - padX);
+    const boxY = Math.max(0, hit.y - padY);
+    const boxW = Math.min(1 - boxX, Math.max(.04, hit.w + padX * 2));
+    const boxH = Math.min(1 - boxY, Math.max(.025, hit.h + padY * 2));
+    const annotation: TextAnnotation = {
+      id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH,
+      font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
+      color: '#222222', styleId: 'body', coverOriginal: true
+    };
+    setAnnotations(old => [...old, annotation]);
+    setSelectedId(id);
+    setTool('edit');
+    setStatus('Original text is covered for replacement. Select the text inside the white box and type your replacement.');
+  }
+
+  function addCommentAt(point: {x:number;y:number}) {
+    if (!commentDraft.trim()) {
+      setStatus('Write your comment in the right panel first, then choose Place on page.');
+      return;
+    }
+    setComments(old => [...old, { id: crypto.randomUUID(), page, x: point.x, y: point.y, text: commentDraft.trim() }]);
+    setCommentDraft('');
+    setTool('select');
+    setStatus('Comment placed on page ' + page + '. It will be included when you download the edited PDF.');
   }
 
   async function runOcr() {
@@ -860,7 +883,8 @@ export default function App() {
               <span className="resize-label">Drag to resize</span>
             </div>)}
             <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
-            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id))}}>×</button></div>)}
+            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
+            {tool==='comment' && <div className="comment-placement-layer" role="button" aria-label="Click to place comment" title="Click to place your comment" onClick={event=>{event.stopPropagation();const point=normalizedPoint(event);if(point)addCommentAt(point);}}/>}
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
             <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
@@ -885,7 +909,7 @@ export default function App() {
           <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
           <label htmlFor="font-upload">Embed licensed font (.ttf / .otf)</label><input id="font-upload" type="file" accept=".ttf,.otf,font/ttf,font/otf" onChange={async e=>{const file=e.target.files?.[0];if(!file)return;try{const bytes=new Uint8Array(await file.arrayBuffer());const family=selected?.font||font;const fontUrl=URL.createObjectURL(file);const face=new FontFace(family,'url('+fontUrl+')');await face.load();window.document.fonts.add(face);URL.revokeObjectURL(fontUrl);setFontAssets(old=>({...old,[family]:bytes}));setStatus(file.name+' loaded and will be embedded in exported PDFs.');}catch{setStatus('Could not read the selected font file.');}e.currentTarget.value='';}}/>
           <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
-          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{const id=crypto.randomUUID();setComments(old=>[...old,{id,page,x:.5,y:.5,text:commentDraft.trim()}]);setCommentDraft("");setStatus("Comment added at the centre of page "+page+".");}}>＋ Add comment</button><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool("comment");setStatus("Click the exact location on the PDF page to place your comment.");}}>Place on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
+          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>addCommentAt({x:.5,y:.5})}>＋ Add comment</button><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool("comment");setStatus("Comment placement active: click anywhere on the PDF page to anchor the comment.");}}>Place on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
         </div>
       </aside>
     </section>
