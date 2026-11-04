@@ -273,6 +273,7 @@ export default function App() {
   const [drawColor, setDrawColor] = useState('#d62728');
   const [drawWidth, setDrawWidth] = useState(2.5);
   const drawingRef = useRef<DrawStroke | null>(null);
+  const drawingBaseRef = useRef<EditorSnapshot | null>(null);
   const undoRef = useRef<EditorSnapshot[]>([]);
   const redoRef = useRef<EditorSnapshot[]>([]);
   const lastSnapshotRef = useRef<EditorSnapshot | null>(null);
@@ -306,6 +307,7 @@ export default function App() {
     const current: EditorSnapshot = { annotations, comments, strokes };
     if (!lastSnapshotRef.current) { lastSnapshotRef.current = current; return; }
     if (applyingHistoryRef.current) { applyingHistoryRef.current = false; lastSnapshotRef.current = current; return; }
+    if (drawingRef.current) return;
     undoRef.current = [...undoRef.current.slice(-99), lastSnapshotRef.current];
     redoRef.current = [];
     lastSnapshotRef.current = current;
@@ -552,7 +554,7 @@ export default function App() {
     const point = normalizedPoint(event); if (!point) return;
     event.preventDefault();
     const stroke: DrawStroke = { id: crypto.randomUUID(), page, color: drawColor, width: drawWidth, points: [point] };
-    drawingRef.current = stroke; setStrokes(old => [...old, stroke]);
+    drawingBaseRef.current = lastSnapshotRef.current || { annotations, comments, strokes }; drawingRef.current = stroke; setStrokes(old => [...old, stroke]);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
   function continueDrawing(event: ReactPointerEvent<HTMLDivElement>) {
@@ -563,7 +565,14 @@ export default function App() {
     drawingRef.current = next;
     setStrokes(old => old.map(item => item.id === next.id ? next : item));
   }
-  function finishDrawing() { drawingRef.current = null; }
+  function finishDrawing() {
+    if (!drawingRef.current) return;
+    const base = drawingBaseRef.current;
+    if (base) { undoRef.current = [...undoRef.current.slice(-99), base]; redoRef.current = []; }
+    drawingRef.current = null; drawingBaseRef.current = null;
+    lastSnapshotRef.current = { annotations, comments, strokes };
+    setStatus('Freehand stroke added.');
+  }
 
   async function exportPdf() {
     if (!document) return;
