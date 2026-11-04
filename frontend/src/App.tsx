@@ -279,6 +279,7 @@ export default function App() {
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
   const resizeRef = useRef<ResizeSession | null>(null);
+  const moveRef = useRef<ResizeSession | null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
   const activeStyle: TextStyle = selected ? { id: selected.styleId || activeStyleId, label: TEXT_STYLES.find(style => style.id === selected.styleId)?.label || 'Custom', font:selected.font, size:selected.size, color:selected.color, bold:selected.bold||false, italic:selected.italic||false, underline:selected.underline||false, align:selected.align||'left' } : (TEXT_STYLES.find(style => style.id === activeStyleId) || TEXT_STYLES[6]);
@@ -347,6 +348,12 @@ export default function App() {
 
   useEffect(() => {
     function moveResize(event: PointerEvent) {
+      const moving = moveRef.current;
+      if (moving) {
+        const dx = (event.clientX-moving.startX)/moving.pageWidth, dy=(event.clientY-moving.startY)/moving.pageHeight;
+        const x=Math.max(0,Math.min(1-moving.start.w,moving.start.x+dx)), y=Math.max(0,Math.min(1-moving.start.h,moving.start.y+dy));
+        setAnnotations(old=>old.map(item=>item.id===moving.id?{...item,x,y}:item)); return;
+      }
       const session = resizeRef.current;
       if (!session) return;
       const dx = (event.clientX - session.startX) / session.pageWidth;
@@ -367,7 +374,7 @@ export default function App() {
       }
       setAnnotations(old => old.map(item => item.id === session.id ? { ...item, x, y, w, h } : item));
     }
-    function endResize() { resizeRef.current = null; }
+    function endResize() { resizeRef.current = null; moveRef.current = null; }
     window.addEventListener('pointermove', moveResize);
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
@@ -377,6 +384,14 @@ export default function App() {
       window.removeEventListener('pointercancel', endResize);
     };
   }, []);
+
+  function beginMove(event: ReactPointerEvent<HTMLButtonElement>, annotation: TextAnnotation) {
+    event.preventDefault(); event.stopPropagation();
+    const canvas = canvasRef.current; if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    moveRef.current = { id: annotation.id, edge: 'move', startX: event.clientX, startY: event.clientY, start: { ...annotation }, pageWidth: rect.width, pageHeight: rect.height };
+    setSelectedId(annotation.id);
+  }
 
   function beginResize(event: ReactPointerEvent<HTMLButtonElement>, annotation: TextAnnotation, edge: string) {
     event.preventDefault();
@@ -604,6 +619,7 @@ export default function App() {
           {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
             <canvas ref={canvasRef}/>
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
+              <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>
               <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
