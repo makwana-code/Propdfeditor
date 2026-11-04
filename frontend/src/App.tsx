@@ -557,6 +557,53 @@ export default function App() {
     } finally { setBusy(false); }
   }
 
+
+  async function splitPdf() {
+    if (!document) { setStatus('Open a PDF before splitting.'); return; }
+    const input = window.prompt('Enter pages/ranges to extract (example: 1-3,5):', '1-' + document.pages);
+    if (input === null) return;
+    try {
+      const indices = new Set<number>();
+      for (const part of input.split(',')) {
+        const pieces = part.trim().split('-'); const first = Number(pieces[0]); const last = Number(pieces[1] || pieces[0]);
+        if (!Number.isInteger(first) || !Number.isInteger(last) || first < 1 || last > document.pages || first > last) throw new Error('Enter valid page numbers within this PDF.');
+        for (let n = first; n <= last; n++) indices.add(n - 1);
+      }
+      if (!indices.size) throw new Error('Select at least one page.');
+      setBusy(true); setStatus('Splitting PDF…');
+      const source = await PDFDocument.load(document.bytes.slice(0)); const output = await PDFDocument.create();
+      const pages = await output.copyPages(source, [...indices].sort((a,b) => a-b)); pages.forEach(p => output.addPage(p));
+      const bytes = await output.save(); const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
+      const a = window.document.createElement('a'); a.href = url; a.download = 'split-pages.pdf'; a.click(); URL.revokeObjectURL(url);
+      setStatus('Created a PDF with ' + pages.length + ' selected page(s).');
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Split failed.'); } finally { setBusy(false); }
+  }
+
+  async function rotateCurrentPage() {
+    if (!document) return;
+    try {
+      const pdf = await PDFDocument.load(document.bytes.slice(0)); const target = pdf.getPage(page - 1);
+      target.setRotation({ angle: (target.getRotation().angle + 90) % 360 }); const bytes = await pdf.save();
+      const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
+      setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), pages: pdf.getPageCount() });
+      setStatus('Page ' + page + ' rotated 90 degrees clockwise.');
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not rotate page.'); }
+  }
+
+  async function deleteCurrentPage() {
+    if (!document) return;
+    if (document.pages <= 1) { setStatus('A PDF must contain at least one page.'); return; }
+    if (!window.confirm('Delete page ' + page + '?')) return;
+    try {
+      const pdf = await PDFDocument.load(document.bytes.slice(0)); pdf.removePage(page - 1); const bytes = await pdf.save();
+      const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
+      setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength), pages: pdf.getPageCount() });
+      setAnnotations(old => old.filter(a => a.page !== page).map(a => a.page > page ? { ...a, page: a.page - 1 } : a));
+      setComments(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
+      setPage(p => Math.min(p, pdf.getPageCount())); setSelectedId(null); setStatus('Page deleted.');
+    } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not delete page.'); }
+  }
+
   async function mergePdfs() {
     if (mergeFiles.length < 2) { setStatus('Select at least two PDF files.'); return; }
     setBusy(true);
