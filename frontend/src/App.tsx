@@ -253,7 +253,8 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right' };
+type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean };
+type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; text: string };
 type ResizeSession = { id: string; edge: string; startX: number; startY: number; start: TextAnnotation; pageWidth: number; pageHeight: number };
 
@@ -275,6 +276,11 @@ export default function App() {
   const [mergeFiles, setMergeFiles] = useState<File[]>([]);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Open a PDF to start editing.');
+  const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'>('pages');
+  const [bookmarks, setBookmarks] = useState<Array<{title:string; page:number}>>([]);
+  const [textHits, setTextHits] = useState<PdfTextHit[]>([]);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [searchResults, setSearchResults] = useState<Array<{page:number;text:string}>>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
@@ -325,6 +331,14 @@ export default function App() {
         canvas.style.height = viewport.height + 'px';
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+        const content = await pdfPage.getTextContent();
+        const hits: PdfTextHit[] = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim()).map((item:any,index:number) => {
+          const transform = pdfjs.Util.transform(viewport.transform, item.transform);
+          const itemHeight = Math.max(8, Math.hypot(transform[2], transform[3]));
+          const itemWidth = Math.max(8, (item.width || item.str.length * itemHeight * .45) * viewport.scale);
+          return { id: page + '-' + index, page, text:item.str, x:Math.max(0,transform[4]/viewport.width), y:Math.max(0,(transform[5]-itemHeight)/viewport.height), w:Math.min(1,itemWidth/viewport.width), h:Math.min(1,itemHeight*1.35/viewport.height), fontSize:itemHeight/Math.max(.01,viewport.scale) };
+        });
+        if (!cancelled) setTextHits(hits);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : 'Unable to render PDF page.');
       }
@@ -414,6 +428,12 @@ export default function App() {
       const bytes = await file.arrayBuffer();
       const parsed = await PDFDocument.load(bytes);
       setDocument({ file, bytes, pages: parsed.getPageCount() });
+      const loading = pdfjs.getDocument({data:new Uint8Array(bytes.slice(0))});
+      const pdfView = await loading.promise;
+      const outline = await pdfView.getOutline();
+      const entries:Array<{title:string;page:number}> = [];
+      const visit = async (nodes:any[]) => { for (const node of nodes || []) { let target:any=node.dest; if (typeof target === 'string') target=await pdfView.getDestination(target); let targetPage=1; if (Array.isArray(target) && target[0]) { try { targetPage=(await pdfView.getPageIndex(target[0]))+1; } catch {} } entries.push({title:String(node.title||'Untitled bookmark'),page:targetPage}); if (node.items?.length) await visit(node.items); } };
+      await visit(outline || []); setBookmarks(entries); setSearchResults([]); setTextHits([]);
       setPage(1); setZoom(100); setAnnotations([]); setComments([]); setSelectedId(null);
       setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages');
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
@@ -443,6 +463,21 @@ export default function App() {
       setTool('select');
       setStatus('Comment anchored to the selected PDF location.');
     }
+  }
+
+  function editExistingText(hit: PdfTextHit) {
+    const id = crypto.randomUUID();
+    const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
+    const annotation:TextAnnotation={id,page:hit.page,text:hit.text,x:hit.x,y:hit.y,w:Math.max(.06,Math.min(.95,hit.w*1.2)),h:Math.max(.025,Math.min(.3,hit.h*1.6)),font:style.font,size:Math.max(6,Math.min(36,hit.fontSize)),color:'#222222',styleId:'body',coverOriginal:true};
+    setAnnotations(old=>[...old,annotation]); setSelectedId(id); setTool('select'); setStatus('Original text selected. Edit it in the text box; export replaces the covered original with your new text.');
+  }
+
+  async function runSearch() {
+    if (!pdfRef.current || !searchQuery.trim()) { setSearchResults([]); return; }
+    const query=searchQuery.trim().toLowerCase(); const results:Array<{page:number;text:string}> = [];
+    setBusy(true);
+    try { for(let p=1;p<=pdfRef.current.numPages;p++){ const pg=await pdfRef.current.getPage(p); const content=await pg.getTextContent(); const text=(content.items as any[]).map(item=>item.str||'').join(' '); if(text.toLowerCase().includes(query)){ const at=text.toLowerCase().indexOf(query); results.push({page:p,text:text.slice(Math.max(0,at-65),Math.min(text.length,at+query.length+100))}); } } setSearchResults(results); setStatus(results.length+' page(s) contain “'+searchQuery+'”.'); }
+    catch(error){setStatus(error instanceof Error?error.message:'Search failed.');} finally{setBusy(false);}
   }
 
   function updateAnnotation(id: string, patch: Partial<TextAnnotation>) {
@@ -478,6 +513,7 @@ export default function App() {
         }
         const x = annotation.x * width;
         const top = annotation.y * height;
+        if (annotation.coverOriginal) target.drawRectangle({x:x-1,y:height-top-annotation.h*height-1,width:annotation.w*width+2,height:annotation.h*height+2,color:rgb(1,1,1),borderWidth:0});
         const size = annotation.size;
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
         const boxWidth = Math.max(1, annotation.w * width);
@@ -657,21 +693,25 @@ export default function App() {
 
     <section className="studio-workspace">
       <aside className="studio-pages">
-        <button className="side-tab active" type="button" onClick={()=>setStatus(document?'Page navigation':'Open a PDF to view pages.')}>▣<span>Pages</span></button>
-        <button className="side-tab" type="button" disabled>▤<span>Bookmarks</span></button>
-        <button className="side-tab" type="button" disabled>☷<span>Outline</span></button>
-        <button className="side-tab" type="button" disabled>⌕<span>Search</span></button>
+        <button className={activePanel==='pages'?'side-tab active':'side-tab'} type="button" onClick={()=>setActivePanel('pages')}>▣<span>Pages</span></button>
+        <button className={activePanel==='bookmarks'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('bookmarks')}>▤<span>Bookmarks</span></button>
+        <button className={activePanel==='outline'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('outline')}>☷<span>Outline</span></button>
+        <button className={activePanel==='search'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('search')}>⌕<span>Search</span></button>
       </aside>
 
-      <aside className="studio-thumbnails" aria-label="PDF page thumbnails">
-        {document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><button key={index+1} className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button>)}<small>{document.pages} page(s)</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>}
+      <aside className="studio-thumbnails" aria-label="PDF navigation panel">
+        {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><button key={index+1} className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button>)}<small>{document.pages} page(s)</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
+        {activePanel==='bookmarks' && <div className="nav-results"><b>Bookmarks</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>No PDF bookmarks found in this file.</p>}</div>}
+        {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{textHits.filter(hit=>hit.fontSize>=14).slice(0,150).map((item,i)=><button key={item.id} onClick={()=>setPage(item.page)}>{item.text}<small>Page {item.page}</small></button>)}{!textHits.some(hit=>hit.fontSize>=14)&&<p>Headings will appear here when detected on the current page.</p>}</div>}
+        {activePanel==='search' && <div className="nav-results"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
       </aside>
 
       <article className="studio-viewer">
         <div className="studio-scroll">
           {document ? <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick}>
             <canvas ref={canvasRef}/>
-            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
+            {textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) }
+            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
               <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>
               <textarea value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box"/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
