@@ -861,14 +861,57 @@ export default function App() {
           color: rgb(0.42, 0.31, 0.13), maxWidth: cardWidth - 12, lineHeight: 10
         });
       }
-      const bytes = await pdf.save();
+      let bytes = await pdf.save();
+
+      // Any edit that covers source text is exported as a sanitized page image.
+      // This removes the original page content stream (including hidden text) instead
+      // of relying on a white rectangle over recoverable source text.
+      const replacementPages = new Set(annotations.filter(item => item.coverOriginal).map(item => item.page));
+      if (replacementPages.size > 0) {
+        const renderedPdf = await pdfjs.getDocument({ data: bytes }).promise;
+        const sanitized = await PDFDocument.create();
+        for (let pageNumber = 1; pageNumber <= renderedPdf.numPages; pageNumber++) {
+          const sourcePage = await renderedPdf.getPage(pageNumber);
+          const viewport = sourcePage.getViewport({ scale: 2 });
+          const canvas = window.document.createElement('canvas');
+          canvas.width = Math.ceil(viewport.width);
+          canvas.height = Math.ceil(viewport.height);
+          const context = canvas.getContext('2d');
+          if (!context) throw new Error('Could not create a canvas to sanitize edited PDF pages.');
+          await sourcePage.render({ canvasContext: context, viewport }).promise;
+          const dataUrl = canvas.toDataURL('image/png');
+          const pngBytes = Uint8Array.from(atob(dataUrl.split(',')[1]), char => char.charCodeAt(0));
+          const image = await sanitized.embedPng(pngBytes);
+          const originalSize = pdf.getPage(pageNumber - 1).getSize();
+          const page = sanitized.addPage([originalSize.width, originalSize.height]);
+          page.drawImage(image, { x: 0, y: 0, width: originalSize.width, height: originalSize.height });
+          canvas.width = 0;
+          canvas.height = 0;
+        }
+        await renderedPdf.destroy();
+        // Keep OCR text on pages that were not sanitized. On sanitized pages,
+        // omit OCR text so removed source words cannot be reintroduced invisibly.
+        const ocrFont = await sanitized.embedFont(StandardFonts.Helvetica);
+        for (const word of ocrWords) {
+          if (replacementPages.has(word.page)) continue;
+          const target = sanitized.getPage(word.page - 1);
+          const { height } = target.getSize();
+          target.drawText(word.text, { x: word.x, y: height - word.y - word.height, size: Math.max(4, Math.min(18, word.height * 0.82)), font: ocrFont, color: rgb(0,0,0), opacity: 0, maxWidth: Math.max(1, word.width), lineHeight: Math.max(4, word.height) });
+        }
+        bytes = await sanitized.save();
+      }
+
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
       const anchor = window.document.createElement('a');
       anchor.href = url;
       anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
       anchor.click();
       URL.revokeObjectURL(url);
-      setStatus(annotations.some(item => item.coverOriginal) ? 'Export complete. Existing text edits are still visual overlays; original text remains recoverable. Not secure redaction.' : ocrWords.length ? 'Export complete with an invisible OCR text layer for search and copy.' : 'Export complete. Text annotations have been added to the PDF.');
+      setStatus(replacementPages.size > 0
+        ? 'Sanitized export complete: pages with replaced source text were flattened to remove their original text layer. Text on those pages is image-based and not searchable; run OCR again only after verifying the replacement/redaction visually.'
+        : ocrWords.length
+          ? 'Export complete with an invisible OCR text layer for search and copy.'
+          : 'Export complete. Text annotations have been added to the PDF.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
     } finally { setBusy(false); }
