@@ -258,7 +258,7 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean };
+type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; text: string };
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
@@ -547,25 +547,32 @@ export default function App() {
   }
 
   function editExistingText(hit: PdfTextHit) {
+    const existing = annotations.find(item => item.sourceHitId === hit.id);
+    if (existing) {
+      setSelectedId(existing.id);
+      setTool('edit');
+      setStatus('Editing this original text. The white replacement layer hides the old characters.');
+      return;
+    }
     const id = crypto.randomUUID();
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
-    // Keep the replacement overlay anchored to the exact PDF.js text run.
-    // The previous minimum-width box created oversized white fields and caused overlap.
-    const padX = Math.min(.0018, hit.h * .06);
-    const padY = Math.min(.0012, hit.h * .04);
+    // PDF.js gives the baseline-based text bounds. Expand slightly upward/downward
+    // so the opaque replacement layer fully covers glyph ascenders and descenders.
+    const padX = Math.max(.001, Math.min(.003, hit.h * .08));
+    const padY = Math.max(.0015, Math.min(.0035, hit.h * .18));
     const boxX = Math.max(0, hit.x - padX);
     const boxY = Math.max(0, hit.y - padY);
-    const boxW = Math.min(1 - boxX, Math.max(.008, hit.w + padX * 2));
-    const boxH = Math.min(1 - boxY, Math.max(.008, hit.h + padY * 2));
+    const boxW = Math.min(1 - boxX, Math.max(.012, hit.w + padX * 2));
+    const boxH = Math.min(1 - boxY, Math.max(.012, hit.h + padY * 2));
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
-      color: '#222222', styleId: 'body', align: 'left', coverOriginal: true
+      color: '#222222', styleId: 'body', align: 'left', coverOriginal: true, sourceHitId: hit.id
     };
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
     setTool('edit');
-    setStatus('Original text is masked. The existing text is selected—type to replace it in the same position.');
+    setStatus('Original text is covered by an opaque white layer. Select the text and type to replace it; resize the box if the replacement is longer.');
   }
 
   function addCommentAt(point: {x:number;y:number}) {
@@ -822,7 +829,8 @@ export default function App() {
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
       <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
       <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select / Move mode: select boxes and drag the Move handle. Text content is locked in this mode.')}}>↖ Select / Move</button>
-      <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click a highlighted text area or an existing text box, then type.')}}>✎ Edit Text</button>
+      <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click original PDF text, then type to replace it.')}}>✎ Edit Text</button>
+      <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('comment');setStatus(commentDraft.trim()?'Comment ready: click the PDF page where its pin should appear.':'Enter a comment in the right panel, then click the PDF page to place it.')}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
@@ -876,15 +884,15 @@ export default function App() {
           {document ? (continuousView && continuousUrl ? <iframe className="continuous-pdf-view" title="Continuous PDF pages" src={continuousUrl+'#toolbar=1&navpanes=0&view=FitH'} /> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
-            {tool==='edit' ? textHits.filter(hit=>hit.page===page).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
+            {tool==='edit' ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
             {annotations.filter(a=>a.page===page).map(a=><div key={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setTool('select')}}>
               {tool==='select' && <button type="button" className="move-text-handle" aria-label="Move text box" title="Drag to move" onPointerDown={event=>beginMove(event,a)}>✥ Move</button>}
-              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'transparent':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.2,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/>
-              {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
+              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')e.currentTarget.blur()}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
+              {(['n','s','e','w','ne','nw','se','sw'] as const).filter(edge=>!a.coverOriginal || ['e','s','se'].includes(edge)).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
             <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
-            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,Math.max(2,c.y*100))+'%',left:Math.min(72,Math.max(2,c.x*100))+'%'}}><b>Comment {i+1}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
+            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
             <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
