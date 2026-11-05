@@ -39,7 +39,7 @@
 .pdf-annotation.selected textarea{cursor:text}
 .resize-label{position:absolute;right:0;bottom:-17px;background:#285b9b;color:white;border-radius:3px;padding:2px 5px;font:9px 'DM Sans',sans-serif;white-space:nowrap;pointer-events:none;opacity:0}
 .pdf-annotation.selected .resize-label{opacity:1}
-.comment-connectors{position:absolute;z-index:5;inset:0;width:100%;height:100%;pointer-events:none;overflow:visible}
+.comment-connectors{position:absolute;z-index:5;inset:0;width:100%;height:100%;pointer-events:auto!important;overflow:visible;touch-action:none}
 .comment-note{position:absolute;z-index:6;width:190px;max-width:35%;padding:9px 24px 9px 10px;pointer-events:auto;border:1px solid #edcf9e;border-radius:7px;background:#fffaf1;color:#72511e;box-shadow:0 3px 12px #17243b1c;font:11px/1.35 'DM Sans',sans-serif;white-space:normal}
 .comment-note b,.comment-note span{display:block}
 .comment-note b{font-size:10px;margin-bottom:4px;color:#9a6418}
