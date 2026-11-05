@@ -884,7 +884,7 @@ export default function App() {
       const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
       setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, pages: pdf.getPageCount() });
       setAnnotations(old => old.map(item => item.page === page ? { ...item, x: 1 - item.y - item.h, y: item.x, w: item.h, h: item.w } : item));
-      setComments(old => old.map(item => item.page === page ? { ...item, x: 1 - item.y, y: item.x, boxX: 1 - item.boxY, boxY: item.boxX } : item));
+      setComments(old => old.map(item => item.page === page ? { ...item, x: 1 - item.y, y: item.x, boxX: 1 - (item.boxY ?? item.y), boxY: item.boxX ?? item.x } : item));
       setStrokes(old => old.map(item => item.page === page ? { ...item, points: item.points.map(point => ({ x: 1 - point.y, y: point.x })) } : item));
       setStatus('Page ' + page + ' rotated 90 degrees clockwise; page annotations and drawings were rotated with it.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not rotate page.'); }
