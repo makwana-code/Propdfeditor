@@ -140,3 +140,25 @@
 .pdf-annotation.source-text-edit textarea{display:block!important;width:100%!important;height:100%!important;min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;border:0!important;outline:0!important;resize:none!important;overflow:hidden!important;background:transparent!important;line-height:1.05!important;box-shadow:none!important;}
 .pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8!important;outline-offset:1px;}
 .pdf-annotation.source-text-edit .resize-handle,.pdf-annotation.source-text-edit .resize-label{display:none!important;}
+
+
+/* Final fixes: opaque original-text masking, usable replacement resizing and comments */
+.pdf-annotation.source-text-edit{
+  min-width:0!important;min-height:0!important;padding:0!important;margin:0!important;
+  overflow:visible!important;background:#fff!important;opacity:1!important;
+  isolation:isolate;z-index:7;box-shadow:none!important;border:0!important;
+}
+.pdf-annotation.source-text-edit textarea{
+  display:block!important;width:100%!important;height:100%!important;
+  min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;
+  border:0!important;outline:0!important;resize:none!important;overflow:hidden!important;
+  background:#fff!important;color:inherit!important;line-height:1.05!important;
+  white-space:pre-wrap!important;box-shadow:none!important;
+}
+.pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8!important;outline-offset:1px}
+.pdf-annotation.source-text-edit .resize-handle{opacity:0}
+.pdf-annotation.source-text-edit.selected .resize-handle{opacity:1}
+.pdf-annotation.source-text-edit .resize-label{display:none!important}
+.comment-note{left:74%!important;right:2%!important;width:24%!important;max-width:24%!important;min-width:0!important;z-index:12}
+.comment-note button{z-index:2;cursor:pointer}
+.pdf-page-stage:has(.comment-note){overflow:visible}
