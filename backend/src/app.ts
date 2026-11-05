@@ -45,7 +45,7 @@ const upload = multer({
 async function removeFiles(files: Express.Multer.File[] = []) {
   await Promise.all(files.map(async (file) => {
     await fs.unlink(file.path).catch(() => undefined);
-    await fs.unlink(file.path.replace(/\\.pdf$/i, '.json')).catch(() => undefined);
+    await fs.unlink(file.path.replace(/\.pdf$/i, '.json')).catch(() => undefined);
   }));
 }
 
@@ -61,7 +61,7 @@ function tokenHash(token: string) {
 }
 
 async function authorizeDocumentDownload(id: string, authorization: string | undefined) {
-  const match = authorization?.match(/^Bearer\\s+([A-Za-z0-9_-]{40,})$/i);
+  const match = authorization?.match(/^Bearer\s+([A-Za-z0-9_-]{40,})$/i);
   if (!match) return false;
   const metadataPath = path.join(storageDir, `${id}.json`);
   try {
