@@ -338,7 +338,7 @@ export default function App() {
     if (!cloudUser) { await signInOrUp(); return; }
     if (document.bytes.byteLength > 50*1024*1024) { setStatus('PDF exceeds the 50 MB cloud limit.'); return; }
     setBusy(true); setStatus('Saving PDF and edit progress to your private cloud…');
-    try { const safeName=document.file.name.replace(/[^a-zA-Z0-9._-]/g,'_'); const path=cloudUser.id+'/'+crypto.randomUUID()+'-'+safeName; const upload=await supabase.storage.from('pdf-documents').upload(path,new Blob([document.bytes.slice(0)],{type:'application/pdf'}),{contentType:'application/pdf'}); if(upload.error) throw upload.error; const record=await supabase.from('saved_documents').insert({user_id:cloudUser.id,file_name:document.file.name,storage_path:path,file_size:document.bytes.byteLength,editor_state:{page,zoom,annotations,comments,strokes}}); if(record.error) { await supabase.storage.from('pdf-documents').remove([path]); throw record.error; } setStatus('Saved privately to ProPDF Cloud with your current edits.'); }
+    try { const safeName=document.file.name.replace(/[^a-zA-Z0-9._-]/g,'_'); const path=cloudUser.id+'/'+crypto.randomUUID()+'-'+safeName; const upload=await supabase.storage.from('pdf-documents').upload(path,new Blob([document.bytes.slice(0)],{type:'application/pdf'}),{contentType:'application/pdf'}); if(upload.error) throw upload.error; const record=await supabase.from('saved_documents').insert({user_id:cloudUser.id,file_name:document.file.name,storage_path:path,file_size:document.bytes.byteLength,editor_state:{page,zoom,annotations,comments,strokes}}); if(record.error) { await supabase.storage.from('pdf-documents').remove([path]); throw record.error; } setStatus('Saved the original PDF and editor progress privately to ProPDF Cloud. Export the PDF separately to include annotations in the document.'); }
     catch(error) { setStatus(error instanceof Error ? 'Cloud save failed: '+error.message : 'Cloud save failed.'); } finally { setBusy(false); }
   }
   async function openFromCloud() {
@@ -653,19 +653,34 @@ export default function App() {
   }
 
   async function runOcr() {
-    const canvas = canvasRef.current;
-    if (!document || !canvas) { setStatus('Open a PDF page before running OCR.'); return; }
-    setBusy(true); setStatus('Running OCR on page ' + page + '…');
+    if (!document || !pdfRef.current) { setStatus('Open a PDF before running OCR.'); return; }
+    setBusy(true); setStatus('Starting full-document OCR…');
     let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
+    const results: Array<{page:number;text:string}> = [];
     try {
       worker = await createWorker('eng');
-      const result = await worker.recognize(canvas);
-      const text = result.data.text.trim();
-      if (!text) { setStatus('OCR completed: no readable text was detected on this page.'); return; }
-      setSearchQuery(text.split(/\\s+/).slice(0,8).join(' '));
-      setSearchResults([{page,text:text.slice(0,500)}]);
+      const pdf = pdfRef.current;
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+        setStatus('Running OCR: page ' + pageNumber + ' of ' + pdf.numPages + '…');
+        const pdfPage = await pdf.getPage(pageNumber);
+        const viewport = pdfPage.getViewport({ scale: 1.5 });
+        const canvas = window.document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not create an OCR canvas.');
+        await pdfPage.render({ canvasContext: context, viewport }).promise;
+        const result = await worker.recognize(canvas);
+        const text = result.data.text.trim();
+        if (text) results.push({ page: pageNumber, text: text.slice(0, 2000) });
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      if (!results.length) { setStatus('OCR completed: no readable text was detected in this PDF.'); return; }
+      setSearchQuery('');
+      setSearchResults(results);
       setActivePanel('search');
-      setStatus('OCR completed for page ' + page + '. Extracted text is shown in Search.');
+      setStatus('OCR completed for ' + results.length + ' page(s). Extracted text is shown in Search. This does not add a searchable OCR layer to the exported PDF.');
     } catch (error) { setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.'); }
     finally { if (worker) await worker.terminate(); setBusy(false); }
   }
@@ -868,7 +883,10 @@ export default function App() {
       target.setRotation(degrees((target.getRotation().angle + 90) % 360)); const bytes = await pdf.save();
       const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
       setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, pages: pdf.getPageCount() });
-      setStatus('Page ' + page + ' rotated 90 degrees clockwise.');
+      setAnnotations(old => old.map(item => item.page === page ? { ...item, x: 1 - item.y - item.h, y: item.x, w: item.h, h: item.w } : item));
+      setComments(old => old.map(item => item.page === page ? { ...item, x: 1 - item.y, y: item.x, boxX: 1 - item.boxY, boxY: item.boxX } : item));
+      setStrokes(old => old.map(item => item.page === page ? { ...item, points: item.points.map(point => ({ x: 1 - point.y, y: point.x })) } : item));
+      setStatus('Page ' + page + ' rotated 90 degrees clockwise; page annotations and drawings were rotated with it.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not rotate page.'); }
   }
 
@@ -882,6 +900,7 @@ export default function App() {
       setDocument({ file, bytes: new Uint8Array(bytes).buffer as ArrayBuffer, pages: pdf.getPageCount() });
       setAnnotations(old => old.filter(a => a.page !== page).map(a => a.page > page ? { ...a, page: a.page - 1 } : a));
       setComments(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
+      setStrokes(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
       setPage(p => Math.min(p, pdf.getPageCount())); setSelectedId(null); setStatus('Page deleted.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not delete page.'); }
   }
