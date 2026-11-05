@@ -608,7 +608,7 @@ export default function App() {
     if (existing) {
       setSelectedId(existing.id);
       setTool('edit');
-      setStatus('Editing this original text. The white replacement layer hides the old characters.');
+      setStatus('This is a visual overlay only. The original PDF text remains in the file and may still be searchable or copyable; secure text replacement is not available yet.');
       return;
     }
     const id = crypto.randomUUID();
@@ -629,7 +629,7 @@ export default function App() {
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
     setTool('edit');
-    setStatus('Text selected. Edit while Edit Text is active; switch to Select by clicking the selected text again, then drag the text itself to move it.');
+    setStatus('Text selected for visual overlay editing. The source text is not removed from the PDF; do not use this for confidential redaction.');
   }
 
   function addCommentAt(point: {x:number;y:number}) {
@@ -833,7 +833,7 @@ export default function App() {
       anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
       anchor.click();
       URL.revokeObjectURL(url);
-      setStatus('Export complete. Text annotations have been added to the PDF.');
+      setStatus(annotations.some(item => item.coverOriginal) ? 'Export complete, but original selected text remains underneath visual overlays and may be searchable/copyable. This is not secure text replacement or redaction.' : 'Export complete. Text annotations have been added to the PDF.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
     } finally { setBusy(false); }
