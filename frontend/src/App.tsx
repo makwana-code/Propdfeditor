@@ -850,7 +850,6 @@ export default function App() {
 
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
       <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
-      <button className={tool==='select'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('select');setStatus('Select / Move mode: select boxes and drag the Move handle. Text content is locked in this mode.')}}>↖ Select / Move</button>
       <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click original PDF text, then type to replace it.')}}>✎ Edit Text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{const note=window.prompt('Enter your comment:');if(note?.trim()){setCommentDraft(note.trim());setTool('comment');setStatus('Comment ready. Click the exact position on the PDF page to place it.');}}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
@@ -938,7 +937,7 @@ export default function App() {
           <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
 
           <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
-          <label>Comments</label><textarea className="comment-input" value={commentDraft} onChange={e=>setCommentDraft(e.target.value)} placeholder="Write your comment here…"/><button type="button" className="toolbar-button" disabled={!document||!commentDraft.trim()} onClick={()=>{setTool('comment');setStatus('Comment ready: click the exact position on the PDF page to place it.');}}>＋ Place comment on page</button><small>{comments.length} comment(s) on this document</small>{comments.filter(v=>v.page===page).map((v,i)=><div key={v.id} className="comment-list-item"><span>{i+1}. {v.text}</span><button type="button" onClick={()=>setComments(old=>old.filter(x=>x.id!==v.id))} aria-label="Delete comment">×</button></div>)}
+          <small>{comments.length} comment(s) on this document. Use the top Comment button or right-click the page.</small>
         </div>
       </aside>}
     </section>
