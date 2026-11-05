@@ -578,16 +578,19 @@ export default function App() {
   }
 
   function addCommentAt(point: {x:number;y:number}) {
-    const text = commentDraft.trim();
-    if (!text) {
-      setStatus('Click Comment in the top toolbar, enter your note, then click the page.');
+    // Ask for the note only after the user has chosen the exact page position.
+    const entered = commentDraft.trim() || window.prompt('Enter your comment:')?.trim() || '';
+    if (!entered) {
+      setTool('select');
+      setCommentDraft('');
+      setStatus('Comment cancelled. Choose Comment and click the page to add a note.');
       return;
     }
-    const comment: PdfComment = { id: crypto.randomUUID(), page, x: point.x, y: point.y, text };
+    const comment: PdfComment = { id: crypto.randomUUID(), page, x: point.x, y: point.y, text: entered };
     setComments(old => [...old, comment]);
     setCommentDraft('');
     setTool('select');
-    setStatus('Comment added at the selected position on page ' + page + '. It will appear in the editor and exported PDF.');
+    setStatus('Comment added on page ' + page + '.');
   }
 
   async function runOcr() {
@@ -851,7 +854,7 @@ export default function App() {
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
       <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
       <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click original PDF text, then type to replace it.')}}>✎ Edit Text</button>
-      <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{const note=window.prompt('Enter your comment:');if(note?.trim()){setCommentDraft(note.trim());setTool('comment');setStatus('Comment ready. Click the exact position on the PDF page to place it.');}}}>▤ Comment</button>
+      <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setCommentDraft('');setTool('comment');setStatus('Comment mode: click the exact position on the PDF page, then enter your note.');}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
@@ -912,7 +915,7 @@ export default function App() {
               {(['n','s','e','w','ne','nw','se','sw'] as const).filter(edge=>!a.coverOriginal || ['e','s','se'].includes(edge)).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
-            {contextMenu && <div className="pdf-context-menu" style={{left:Math.min(contextMenu.x,Math.max(8,(canvasRef.current?.clientWidth||500)-170)),top:Math.min(contextMenu.y,Math.max(8,(canvasRef.current?.clientHeight||700)-100))}} onClick={e=>e.stopPropagation()}><button type="button" onClick={()=>{const hit=contextMenu.hit;const ann=contextMenu.annotation;setContextMenu(null);if(ann){setSelectedId(ann.id);setTool('edit');}else if(hit){editExistingText(hit);}else{setStatus('Right-click directly on text to edit it.');}}}>✎ Edit Text</button><button type="button" onClick={()=>{const note=window.prompt('Enter your comment:');if(note?.trim()){setComments(old=>[...old,{id:crypto.randomUUID(),page,x:contextMenu.point.x,y:contextMenu.point.y,text:note.trim()}]);setStatus('Comment added at the right-clicked position.');}setContextMenu(null);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}\n            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
+            {contextMenu && <div className="pdf-context-menu" style={{left:Math.min(contextMenu.x,Math.max(8,(canvasRef.current?.clientWidth||500)-170)),top:Math.min(contextMenu.y,Math.max(8,(canvasRef.current?.clientHeight||700)-100))}} onClick={e=>e.stopPropagation()}><button type="button" onClick={()=>{const hit=contextMenu.hit;const ann=contextMenu.annotation;setContextMenu(null);if(ann){setSelectedId(ann.id);setTool('edit');}else if(hit){editExistingText(hit);}else{setStatus('Right-click directly on text to edit it.');}}}>✎ Edit Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);addCommentAt(point);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}\n            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map((c,i)=>{const cardTop=Math.min(88,4+i*12);return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L 740 '+((cardTop+5)*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
             {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(88,4+i*12)+'%',left:'74%'}}><b>Comment {i+1}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
