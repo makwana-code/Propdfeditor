@@ -179,3 +179,8 @@
 .pdf-annotation.source-text-edit textarea{cursor:text!important;user-select:text!important;-webkit-user-select:text!important}
 .comment-note{z-index:12!important;max-width:min(260px,38%)!important;overflow-wrap:anywhere}
 .pdf-context-menu{z-index:30!important}
+
+/* Correct comment cards to follow their actual page anchors; allow moving text by dragging the text itself. */
+.comment-note{left:auto!important;right:auto!important;width:24%!important;max-width:24%!important;min-width:120px!important;box-sizing:border-box!important;}
+.pdf-annotation:not(.source-text-edit) textarea[readonly],.pdf-annotation.source-text-edit textarea[readonly]{cursor:grab!important;touch-action:none!important;user-select:none!important;-webkit-user-select:none!important;}
+.pdf-annotation textarea:not([readonly]){cursor:text!important;touch-action:auto!important;user-select:text!important;-webkit-user-select:text!important;}
