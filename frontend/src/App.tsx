@@ -258,7 +258,7 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
+type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; redacted?: boolean; sourceHitId?: string };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
@@ -634,6 +634,14 @@ export default function App() {
     setStatus('Text selected for visual overlay editing. The source text is not removed from the PDF; do not use this for confidential redaction.');
   }
 
+  function redactSelectedText() {
+    if (!selected || !selected.coverOriginal) { setStatus('Select an existing PDF text item first using Edit Text, then choose Redact.'); return; }
+    const approved = window.confirm('Permanently redact this selected text in the exported PDF? The entire affected page will be flattened to an image so the original text layer is removed. This cannot be undone after export.');
+    if (!approved) return;
+    updateAnnotation(selected.id, { text: '', redacted: true, color: '#ffffff', coverOriginal: true });
+    setStatus('Redaction marked. Download the PDF to create a flattened, sanitized page. Verify the exported file before sharing it.');
+  }
+
   function addCommentAt(point: {x:number;y:number}) {
     // Ask for the note only after the user has chosen the exact page position.
     const entered = commentDraft.trim() || window.prompt('Enter your comment:')?.trim() || '';
@@ -782,7 +790,8 @@ export default function App() {
         }
         const x = annotation.x * width;
         const top = annotation.y * height;
-        if (annotation.coverOriginal) target.drawRectangle({x:x-1,y:height-top-annotation.h*height-1,width:annotation.w*width+2,height:annotation.h*height+2,color:rgb(1,1,1),borderWidth:0});
+        if (annotation.coverOriginal) target.drawRectangle({x:x-1,y:height-top-annotation.h*height-1,width:annotation.w*width+2,height:annotation.h*height+2,color:annotation.redacted?rgb(0,0,0):rgb(1,1,1),borderWidth:0});
+        if (annotation.redacted) continue;
         const size = annotation.size;
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
         const boxWidth = Math.max(1, annotation.w * width);
@@ -1007,6 +1016,7 @@ export default function App() {
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(x=>x.id!==selected.id));setSelectedId(null)}}}>▤ Remove</button>
+      <button className="toolbar-button" disabled={!selected||!selected.coverOriginal||Boolean(selected.redacted)||busy} onClick={redactSelectedText}>▮ Redact selected</button>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button>
       <label className="toolbar-page">Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
@@ -1050,9 +1060,9 @@ export default function App() {
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {tool==='edit' ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
-            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
+            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')+(a.redacted?' redacted-annotation':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.redacted?'#fff':a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
               <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)} />
-              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit' && e.button===0)beginMove(e,a)}} onPointerUp={e=>{if(tool==='edit')saveResizedBox(a.id,e.currentTarget)}} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
+              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit' && e.button===0)beginMove(e,a)}} onPointerUp={e=>{if(tool==='edit')saveResizedBox(a.id,e.currentTarget)}} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label={a.redacted?'Redacted PDF text region':'Editable PDF text box'} style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.redacted?'#000000':a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).filter(edge=>!a.coverOriginal || ['e','s','se'].includes(edge)).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               <span className="resize-label">Drag to resize</span>
             </div>)}
