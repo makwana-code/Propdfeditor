@@ -262,6 +262,7 @@ type TextAnnotation = { id: string; page: number; text: string; x: number; y: nu
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
+type OcrWord = { page: number; text: string; x: number; y: number; width: number; height: number };
 type EditorSnapshot = { annotations: TextAnnotation[]; comments: PdfComment[]; strokes: DrawStroke[] };
 type ResizeSession = { id: string; edge: string; startX: number; startY: number; start: TextAnnotation; pageWidth: number; pageHeight: number };
 
@@ -303,6 +304,7 @@ export default function App() {
   const [textHits, setTextHits] = useState<PdfTextHit[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{page:number;text:string}>>([]);
+  const [ocrWords, setOcrWords] = useState<OcrWord[]>([]);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
@@ -657,6 +659,7 @@ export default function App() {
     setBusy(true); setStatus('Starting full-document OCR…');
     let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
     const results: Array<{page:number;text:string}> = [];
+    const recognizedWords: OcrWord[] = [];
     try {
       worker = await createWorker('eng');
       const pdf = pdfRef.current;
@@ -673,14 +676,23 @@ export default function App() {
         const result = await worker.recognize(canvas);
         const text = result.data.text.trim();
         if (text) results.push({ page: pageNumber, text: text.slice(0, 2000) });
+        const pageWidth = pdfPage.view[2] - pdfPage.view[0];
+        const pageHeight = pdfPage.view[3] - pdfPage.view[1];
+        for (const word of (result.data.words || []) as Array<{text:string;confidence:number;bbox:{x0:number;y0:number;x1:number;y1:number}}>) {
+          const value = word.text?.trim();
+          const box = word.bbox;
+          if (!value || word.confidence < 20 || !box || box.x1 <= box.x0 || box.y1 <= box.y0) continue;
+          recognizedWords.push({page:pageNumber,text:value,x:box.x0/viewport.width*pageWidth,y:box.y0/viewport.height*pageHeight,width:(box.x1-box.x0)/viewport.width*pageWidth,height:(box.y1-box.y0)/viewport.height*pageHeight});
+        }
         canvas.width = 0;
         canvas.height = 0;
       }
       if (!results.length) { setStatus('OCR completed: no readable text was detected in this PDF.'); return; }
       setSearchQuery('');
       setSearchResults(results);
+      setOcrWords(recognizedWords);
       setActivePanel('search');
-      setStatus('OCR completed for ' + results.length + ' page(s). Extracted text is shown in Search. This does not add a searchable OCR layer to the exported PDF.');
+      setStatus('OCR completed. ' + recognizedWords.length + ' invisible text words are ready to be embedded in the exported PDF. Download to apply the searchable OCR layer.');
     } catch (error) { setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.'); }
     finally { if (worker) await worker.terminate(); setBusy(false); }
   }
@@ -811,6 +823,14 @@ export default function App() {
           if (annotation.underline) target.drawLine({ start:{x:alignedX,y:lineY-1.5}, end:{x:alignedX+lineWidth,y:lineY-1.5}, thickness:0.6, color });
         });
       }
+      if (ocrWords.length) {
+        const ocrFont = await pdf.embedFont(StandardFonts.Helvetica);
+        for (const word of ocrWords) {
+          const target = pdf.getPage(word.page - 1);
+          const { height } = target.getSize();
+          target.drawText(word.text, { x: word.x, y: height - word.y - word.height, size: Math.max(4, Math.min(18, word.height * 0.82)), font: ocrFont, color: rgb(0,0,0), opacity: 0, maxWidth: Math.max(1, word.width), lineHeight: Math.max(4, word.height) });
+        }
+      }
       for (const stroke of strokes) {
         const target = pdf.getPage(stroke.page - 1); const { width, height } = target.getSize();
         const color = rgb(parseInt(stroke.color.slice(1,3),16)/255, parseInt(stroke.color.slice(3,5),16)/255, parseInt(stroke.color.slice(5,7),16)/255);
@@ -848,7 +868,7 @@ export default function App() {
       anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
       anchor.click();
       URL.revokeObjectURL(url);
-      setStatus(annotations.some(item => item.coverOriginal) ? 'Export complete, but original selected text remains underneath visual overlays and may be searchable/copyable. This is not secure text replacement or redaction.' : 'Export complete. Text annotations have been added to the PDF.');
+      setStatus(annotations.some(item => item.coverOriginal) ? 'Export complete. Existing text edits are still visual overlays; original text remains recoverable. Not secure redaction.' : ocrWords.length ? 'Export complete with an invisible OCR text layer for search and copy.' : 'Export complete. Text annotations have been added to the PDF.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
     } finally { setBusy(false); }
@@ -949,7 +969,7 @@ export default function App() {
       <label className="toolbar-page">Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
-      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>OCR current page</button>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>OCR all pages</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
