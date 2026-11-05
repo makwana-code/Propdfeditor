@@ -308,6 +308,7 @@ export default function App() {
   const pdfRef = useRef<any>(null);
   const resizeRef = useRef<ResizeSession | null>(null);
   const moveRef = useRef<ResizeSession | null>(null);
+  const commentMoveRef = useRef<{id:string;startX:number;startY:number;start:{x:number;y:number};pageWidth:number;pageHeight:number}|null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
   useEffect(() => {
@@ -447,6 +448,15 @@ export default function App() {
 
   useEffect(() => {
     function moveResize(event: PointerEvent) {
+      const movingComment = commentMoveRef.current;
+      if (movingComment) {
+        const dx = (event.clientX - movingComment.startX) / movingComment.pageWidth;
+        const dy = (event.clientY - movingComment.startY) / movingComment.pageHeight;
+        const x = Math.max(0, Math.min(.96, movingComment.start.x + dx));
+        const y = Math.max(0, Math.min(.96, movingComment.start.y + dy));
+        setComments(old => old.map(item => item.id === movingComment.id ? {...item,x,y} : item));
+        return;
+      }
       const moving = moveRef.current;
       if (moving) {
         const dx = (event.clientX-moving.startX)/moving.pageWidth, dy=(event.clientY-moving.startY)/moving.pageHeight;
@@ -473,7 +483,7 @@ export default function App() {
       }
       setAnnotations(old => old.map(item => item.id === session.id ? { ...item, x, y, w, h } : item));
     }
-    function endResize() { resizeRef.current = null; moveRef.current = null; }
+    function endResize() { resizeRef.current = null; moveRef.current = null; commentMoveRef.current = null; }
     window.addEventListener('pointermove', moveResize);
     window.addEventListener('pointerup', endResize);
     window.addEventListener('pointercancel', endResize);
@@ -483,6 +493,16 @@ export default function App() {
       window.removeEventListener('pointercancel', endResize);
     };
   }, []);
+
+  function beginCommentMove(event: ReactPointerEvent<HTMLElement>, comment: PdfComment) {
+    if (event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const rect = canvas.getBoundingClientRect();
+    commentMoveRef.current = {id:comment.id,startX:event.clientX,startY:event.clientY,start:{x:comment.x,y:comment.y},pageWidth:rect.width,pageHeight:rect.height};
+  }
 
   function beginMove(event: ReactPointerEvent<HTMLElement>, annotation: TextAnnotation) {
     event.preventDefault(); event.stopPropagation();
@@ -916,7 +936,7 @@ export default function App() {
               <span className="resize-label">Drag to resize</span>
             </div>)}
             {contextMenu && <div className="pdf-context-menu" style={{left:Math.min(contextMenu.x,Math.max(8,(canvasRef.current?.clientWidth||500)-170)),top:Math.min(contextMenu.y,Math.max(8,(canvasRef.current?.clientHeight||700)-100))}} onClick={e=>e.stopPropagation()}><button type="button" onClick={()=>{const hit=contextMenu.hit;const ann=contextMenu.annotation;setContextMenu(null);if(ann){setSelectedId(ann.id);setTool('edit');}else if(hit){editExistingText(hit);}else{setStatus('Right-click directly on text to edit it.');}}}>✎ Edit Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);addCommentAt(point);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}\n            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map(c=>{const cardLeft=Math.min(96,Math.max(1,c.x*100+1));const cardTop=Math.min(96,Math.max(1,c.y*100+1));return <g key={c.id}><path d={'M '+(c.x*1000)+' '+(c.y*1000)+' L '+(cardLeft*10)+' '+(cardTop*10)} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5"/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3"/></g>})}</svg>
-            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(86,Math.max(1,c.y*100+1))+'%',left:Math.min(64,Math.max(1,c.x*100+1))+'%'}}><b>Comment {i+1} · Page {c.page}</b><span>{c.text}</span><button type="button" aria-label="Delete comment" onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
+            {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{top:Math.min(86,Math.max(1,c.y*100+1))+'%',left:Math.min(64,Math.max(1,c.x*100+1))+'%'}}><b className="comment-drag-handle" title="Drag to move this comment box" onPointerDown={e=>beginCommentMove(e,c)}>Comment {i+1} · Page {c.page} <span>↕ Move</span></b><span>{c.text}</span><button type="button" aria-label="Delete comment" onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
             <p>All pages open together. Edit text, add comments, highlight, white-out,<br/> draw, rotate, delete pages, merge, split and download. Everything happens<br/> in your browser.</p>
