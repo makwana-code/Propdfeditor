@@ -162,3 +162,9 @@
 .comment-note{left:74%!important;right:2%!important;width:24%!important;max-width:24%!important;min-width:0!important;z-index:12}
 .comment-note button{z-index:2;cursor:pointer}
 .pdf-page-stage:has(.comment-note){overflow:visible}
+
+
+/* Compact right-click actions on the PDF page */
+.pdf-context-menu{position:absolute;z-index:50;min-width:154px;padding:5px;background:#fff;border:1px solid #cbd8e8;border-radius:8px;box-shadow:0 8px 24px #17243b30;display:grid;gap:3px;line-height:normal}
+.pdf-context-menu button{display:block;width:100%;margin:0;padding:8px 10px;border:0;border-radius:5px;background:#fff;color:#29415f;text-align:left;font:12px Arial,sans-serif;cursor:pointer}
+.pdf-context-menu button:hover{background:#edf4fd;color:#205b9e}
