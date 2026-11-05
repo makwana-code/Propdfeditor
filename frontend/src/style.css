@@ -170,3 +170,12 @@
 .pdf-context-menu button:hover{background:#edf4fd;color:#205b9e}
 
 .annotation-drag-strip{position:absolute;z-index:4;left:0;right:0;top:0;height:8px;cursor:grab;background:rgba(40,120,208,.18);border-radius:3px 3px 0 0;touch-action:none}.annotation-drag-strip:hover{background:rgba(40,120,208,.4)}.annotation-drag-strip:active{cursor:grabbing}
+
+
+/* Text-edit and comment usability fixes */
+.source-text-hit{z-index:3!important;display:block!important;min-width:10px;min-height:14px;margin:0;padding:0;border:1px solid transparent!important;background:rgba(35,119,210,.025)!important;opacity:1;cursor:text!important;pointer-events:auto;touch-action:manipulation}
+.source-text-hit:hover,.source-text-hit:focus-visible{border:1px solid #2876cf!important;background:rgba(40,120,208,.12)!important;outline:1px solid #fff}
+.annotation-drag-strip{height:12px!important;top:0;cursor:grab;touch-action:none;pointer-events:auto}
+.pdf-annotation.source-text-edit textarea{cursor:text!important;user-select:text!important;-webkit-user-select:text!important}
+.comment-note{z-index:12!important;max-width:min(260px,38%)!important;overflow-wrap:anywhere}
+.pdf-context-menu{z-index:30!important}
