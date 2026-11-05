@@ -168,3 +168,5 @@
 .pdf-context-menu{position:absolute;z-index:50;min-width:154px;padding:5px;background:#fff;border:1px solid #cbd8e8;border-radius:8px;box-shadow:0 8px 24px #17243b30;display:grid;gap:3px;line-height:normal}
 .pdf-context-menu button{display:block;width:100%;margin:0;padding:8px 10px;border:0;border-radius:5px;background:#fff;color:#29415f;text-align:left;font:12px Arial,sans-serif;cursor:pointer}
 .pdf-context-menu button:hover{background:#edf4fd;color:#205b9e}
+
+.annotation-drag-strip{position:absolute;z-index:4;left:0;right:0;top:0;height:8px;cursor:grab;background:rgba(40,120,208,.18);border-radius:3px 3px 0 0;touch-action:none}.annotation-drag-strip:hover{background:rgba(40,120,208,.4)}.annotation-drag-strip:active{cursor:grabbing}
