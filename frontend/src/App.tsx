@@ -678,7 +678,7 @@ export default function App() {
         if (text) results.push({ page: pageNumber, text: text.slice(0, 2000) });
         const pageWidth = pdfPage.view[2] - pdfPage.view[0];
         const pageHeight = pdfPage.view[3] - pdfPage.view[1];
-        for (const word of (result.data.words || []) as Array<{text:string;confidence:number;bbox:{x0:number;y0:number;x1:number;y1:number}}>) {
+        for (const word of (((result as unknown as {data:{words?:Array<{text:string;confidence:number;bbox:{x0:number;y0:number;x1:number;y1:number}}>}}).data.words) || [])) {
           const value = word.text?.trim();
           const box = word.bbox;
           if (!value || word.confidence < 20 || !box || box.x1 <= box.x0 || box.y1 <= box.y0) continue;
