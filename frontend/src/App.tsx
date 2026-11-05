@@ -500,16 +500,23 @@ export default function App() {
     if (event.button !== 0 || (event.target as HTMLElement).closest('button')) return;
     event.preventDefault();
     event.stopPropagation();
-    const canvas = canvasRef.current;
+    const stage = (event.currentTarget as HTMLElement).closest('.pdf-page-stage') as HTMLElement | null;
     const card = (event.currentTarget as HTMLElement).closest('.comment-note') as HTMLElement | null;
-    if (!canvas || !card) return;
-    const rect = canvas.getBoundingClientRect();
+    if (!stage || !card) return;
+    const pageRect = stage.getBoundingClientRect();
     const cardRect = card.getBoundingClientRect();
+    if (!pageRect.width || !pageRect.height) return;
+    // Read the rendered position so drag remains correct after zooming/resizing
+    // and for comments created by older versions that have no saved boxX/boxY.
+    const currentX = (cardRect.left - pageRect.left) / pageRect.width;
+    const currentY = (cardRect.top - pageRect.top) / pageRect.height;
     commentMoveRef.current = {
       id: comment.id, startX: event.clientX, startY: event.clientY,
-      start: {x: comment.boxX ?? Math.min(.74, Math.max(.02, comment.x + .02)), y: comment.boxY ?? Math.min(.88, Math.max(.02, comment.y + .01))},
-      pageWidth: rect.width, pageHeight: rect.height, cardWidth: cardRect.width, cardHeight: cardRect.height
+      start: {x: currentX, y: currentY},
+      pageWidth: pageRect.width, pageHeight: pageRect.height,
+      cardWidth: cardRect.width, cardHeight: cardRect.height
     };
+    try { (event.currentTarget as HTMLElement).setPointerCapture(event.pointerId); } catch {}
   }
 
   function beginMove(event: ReactPointerEvent<HTMLElement>, annotation: TextAnnotation) {
