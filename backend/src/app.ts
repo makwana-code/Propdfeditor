@@ -7,6 +7,7 @@ import path from 'node:path';
 import fs from 'node:fs/promises';
 import { mkdirSync } from 'node:fs';
 import crypto from 'node:crypto';
+import { fileTypeFromFile } from 'file-type';
 import { PDFDocument } from 'pdf-lib';
 
 const app = express();
@@ -42,7 +43,36 @@ const upload = multer({
 });
 
 async function removeFiles(files: Express.Multer.File[] = []) {
-  await Promise.all(files.map((file) => fs.unlink(file.path).catch(() => undefined)));
+  await Promise.all(files.map(async (file) => {
+    await fs.unlink(file.path).catch(() => undefined);
+    await fs.unlink(file.path.replace(/\\.pdf$/i, '.json')).catch(() => undefined);
+  }));
+}
+
+async function assertPdfSignature(filePath: string) {
+  const detected = await fileTypeFromFile(filePath);
+  if (detected?.mime !== 'application/pdf') {
+    throw new Error('Only genuine PDF files are accepted.');
+  }
+}
+
+function tokenHash(token: string) {
+  return crypto.createHash('sha256').update(token).digest('hex');
+}
+
+async function authorizeDocumentDownload(id: string, authorization: string | undefined) {
+  const match = authorization?.match(/^Bearer\\s+([A-Za-z0-9_-]{40,})$/i);
+  if (!match) return false;
+  const metadataPath = path.join(storageDir, `${id}.json`);
+  try {
+    const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8')) as { tokenHash?: string };
+    if (!metadata.tokenHash) return false;
+    const supplied = Buffer.from(tokenHash(match[1]), 'hex');
+    const expected = Buffer.from(metadata.tokenHash, 'hex');
+    return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
+  } catch {
+    return false;
+  }
 }
 
 app.get('/api/health', (_req, res) => res.status(200).json({ status: 'ok', service: 'propdf-api' }));
@@ -50,11 +80,19 @@ app.get('/api/health', (_req, res) => res.status(200).json({ status: 'ok', servi
 app.post('/api/documents/upload', upload.single('file'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'A PDF file is required in the "file" field.' });
   try {
+    await assertPdfSignature(req.file.path);
     const bytes = await fs.readFile(req.file.path);
     const pdf = await PDFDocument.load(bytes, { ignoreEncryption: false });
+    const id = path.basename(req.file.filename, '.pdf');
+    const downloadToken = crypto.randomBytes(32).toString('base64url');
+    await fs.writeFile(path.join(storageDir, `${id}.json`), JSON.stringify({
+      tokenHash: tokenHash(downloadToken),
+      createdAt: new Date().toISOString(),
+    }), { mode: 0o600 });
     return res.status(201).json({
       document: {
-        id: path.basename(req.file.filename, '.pdf'),
+        id,
+        downloadToken,
         originalName: path.basename(req.file.originalname).slice(0, 255),
         size: req.file.size,
         pages: pdf.getPageCount(),
@@ -72,6 +110,9 @@ app.post('/api/documents/upload', upload.single('file'), async (req, res, next) 
 app.get('/api/documents/:id/download', async (req, res) => {
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid document ID.' });
   const filePath = path.join(storageDir, `${req.params.id}.pdf`);
+  if (!await authorizeDocumentDownload(req.params.id, req.header('authorization'))) {
+    return res.status(401).json({ error: 'A valid document download token is required.' });
+  }
   try {
     await fs.access(filePath);
     return res.download(filePath, 'document.pdf');
@@ -89,6 +130,7 @@ app.post('/api/pdf/merge', upload.array('files', 10), async (req, res) => {
   try {
     const merged = await PDFDocument.create();
     for (const file of files) {
+      await assertPdfSignature(file.path);
       const source = await PDFDocument.load(await fs.readFile(file.path), { ignoreEncryption: false });
       const pages = await merged.copyPages(source, source.getPageIndices());
       pages.forEach((page) => merged.addPage(page));
@@ -109,7 +151,7 @@ app.use((err: unknown, _req: Request, res: Response, _next: NextFunction) => {
   if (res.headersSent) return;
   if (error.code === 'LIMIT_FILE_SIZE') return res.status(413).json({ error: `File exceeds the ${Math.floor(maxUploadBytes / 1024 / 1024)} MB upload limit.` });
   if (error.code === 'LIMIT_FILE_COUNT') return res.status(400).json({ error: 'Too many files. Maximum is 10.' });
-  if (error.message === 'Only PDF files are accepted') return res.status(415).json({ error: error.message });
+  if (error.message === 'Only PDF files are accepted' || error.message === 'Only genuine PDF files are accepted.') return res.status(415).json({ error: 'Only genuine PDF files are accepted.' });
   if (error.message === 'Origin is not allowed by CORS') return res.status(403).json({ error: error.message });
   return res.status(500).json({ error: 'Request could not be processed.' });
 });
