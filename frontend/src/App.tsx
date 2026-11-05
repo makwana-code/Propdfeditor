@@ -614,7 +614,23 @@ export default function App() {
   }
 
   function updateAnnotation(id: string, patch: Partial<TextAnnotation>) {
-    setAnnotations(old => old.map(a => a.id === id ? { ...a, ...patch } : a));
+    setAnnotations(old => old.map(a => {
+      if (a.id !== id) return a;
+      const next = { ...a, ...patch };
+      // Grow original-text replacement boxes as the user types so the new
+      // string is not squeezed into the old PDF run's narrow width.
+      if (a.coverOriginal && typeof patch.text === 'string') {
+        const pageWidth = canvasRef.current?.clientWidth || pageSizeRef.current.width || 1;
+        const fontPx = Math.max(6, a.size * fitZoom * zoom / 10000);
+        const longestLine = Math.max(...patch.text.split('\\n').map(line => line.length), 1);
+        const estimatedWidth = (longestLine * fontPx * .58 + 6) / pageWidth;
+        const lineCount = Math.max(1, patch.text.split('\\n').length);
+        const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / (canvasRef.current?.clientHeight || pageSizeRef.current.height || 1);
+        next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
+        next.h = Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
+      }
+      return next;
+    }));
   }
 
   function saveResizedBox(id: string, element: HTMLTextAreaElement) {
