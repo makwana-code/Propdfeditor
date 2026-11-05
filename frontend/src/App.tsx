@@ -638,7 +638,11 @@ export default function App() {
     if (!canvas) return;
     const rect = element.getBoundingClientRect();
     const pageRect = canvas.getBoundingClientRect();
-    updateAnnotation(id, { w: Math.max(.08, Math.min(.95, rect.width / pageRect.width)), h: Math.max(.04, Math.min(.8, rect.height / pageRect.height)) });
+    const sourceText = annotations.find(item => item.id === id)?.coverOriginal;
+    updateAnnotation(id, {
+      w: Math.max(sourceText ? .012 : .08, Math.min(.95, rect.width / pageRect.width)),
+      h: Math.max(sourceText ? .012 : .04, Math.min(.8, rect.height / pageRect.height))
+    });
   }
 
   function beginDrawing(event: ReactPointerEvent<HTMLDivElement>) {
