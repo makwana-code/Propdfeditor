@@ -191,3 +191,10 @@
 .comment-note .comment-drag-handle span{font-size:10px;font-weight:600;color:#8b6424;white-space:nowrap;}
 .comment-note>span{display:block;user-select:text;-webkit-user-select:text;}
 .comment-note>button{z-index:2;}
+
+
+/* Free 360-degree comment-card dragging: position is independent from the page anchor. */
+.comment-note{left:var(--comment-x)!important;top:var(--comment-y)!important;right:auto!important;bottom:auto!important;cursor:move;touch-action:none;user-select:none;-webkit-user-select:none;}
+.comment-note .comment-drag-handle{cursor:move;touch-action:none;user-select:none;-webkit-user-select:none;}
+.comment-note>span{cursor:text;user-select:text;-webkit-user-select:text;}
+.comment-note>button{cursor:pointer;}
