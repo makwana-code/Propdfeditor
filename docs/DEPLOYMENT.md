@@ -14,13 +14,14 @@
 
 ## Railway backend
 
-1. Deploy the same repository as a separate Railway service.
-2. Set the service Root Directory to `backend` so `backend/Dockerfile` is used as `Dockerfile`.
-3. Set `PORT` (Railway normally supplies this), `FRONTEND_URL` to the exact deployed Vercel origin, `STORAGE_DIR=/app/uploads`, and `MAX_UPLOAD_MB=50`.
-4. The health check path is `/api/health`.
-5. Provision PostgreSQL and set `DATABASE_URL` if/when database-backed features are enabled. The current API does not yet use Prisma for persistence. Uploaded documents are protected by a secret capability token: retain the `downloadToken` returned by upload and send it as `Authorization: Bearer <downloadToken>` when downloading. Losing the token means the document cannot be downloaded through this API.
+1. Deploy the repository as a separate Railway service.
+2. Set Root Directory to `backend` so Railway uses `backend/Dockerfile`.
+3. Set `PORT` (Railway normally supplies it), `FRONTEND_URL` to the exact Vercel origin, `MAX_UPLOAD_MB=50`, `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`, and `SUPABASE_BUCKET=pdf-documents`.
+4. The health check path is `/api/health`. It returns HTTP 503 until the Supabase URL and server-only service-role key are configured.
+5. Apply the checked-in Supabase migrations before enabling the API. The API stores uploaded PDFs in the private Supabase bucket and document metadata plus SHA-256 token hashes in `backend_documents`. It returns a one-time `downloadToken`; clients must retain it and send `Authorization: Bearer <downloadToken>` to download. Losing the token means the document cannot be downloaded through this API.
+6. Never put the service-role key in Vercel `VITE_*` variables or browser code. Rotate it immediately if it is exposed.
 
-The backend upload API still stores files and token metadata on local disk. On Railway or other ephemeral/container hosting, this is not durable and the API upload endpoint must not be used for production documents until its storage adapter is moved to persistent object storage. The frontend ProPDF Cloud flow uses Supabase Storage directly and can be made durable by applying `supabase/migrations/202611050001_private_pdf_cloud.sql` in the Supabase SQL Editor. That migration creates a private `pdf-documents` bucket, the `saved_documents` table, and per-user Row Level Security policies for both rows and objects. Configure frontend Vercel environment variables `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, then redeploy. Never put a Supabase service-role key in frontend variables. Verify email confirmation/auth settings and test two separate users cannot list, download, or mutate each other's objects or metadata before production use.
+The frontend ProPDF Cloud flow is separate from the backend upload API. It uses the user's Supabase session, private Storage bucket and per-user RLS policies for `saved_documents` and storage objects. Configure Vercel `VITE_SUPABASE_URL` and `VITE_SUPABASE_ANON_KEY`, then redeploy. Test with two separate accounts to verify users cannot list, download, or mutate each other's objects or metadata.
 
 ## TS18003 (`No inputs were found in config file`)
 
@@ -28,6 +29,14 @@ The checked-in frontend sources are `frontend/src/**/*.ts(x)` and backend source
 
 The historical Vercel deployment itself was not accessible during this repair, so its exact root cause cannot be confirmed from this local source archive. If the error persists, verify that the deployment commit contains `frontend/src`, that Vercel Root Directory is `frontend`, and that the build log references `frontend/tsconfig.json`.
 
+## PDF editing and security behavior
+
+The editor does not rewrite existing PDF text objects in place. Selecting existing text creates an editable replacement overlay. On export, every affected page is rendered into a new page image so the old source text content stream is not retained. Replacement text and black redaction marks are part of that rendered page image. This is destructive page rasterization, not native text-object editing. All text on an affected page becomes non-searchable/non-selectable. OCR can be run again after export on the new PDF to add an invisible searchable text layer; review OCR accuracy before relying on it.
+
+OCR runs on all pages in English and places recognized words in the export as invisible text on pages that were not rasterized. If a page is rasterized for replacement/redaction, OCR words from that page are deliberately omitted to avoid restoring the original hidden text. Run OCR on the exported PDF after checking the visual result if searchable text is needed.
+
+This is not a certified forensic sanitization tool. It does not independently inspect or remove embedded attachments, portfolios, form data, metadata, signatures, hidden layers, or external references. Before sharing confidential files, inspect the exported PDF independently (render every affected page, extract/search/copy text, and inspect document metadata and attachments). Do not claim certified secure erasure or native PDF text-object replacement.
+
 ## Production blockers
 
-Before handling real customer or confidential documents, complete deployment, configure and test the Supabase migration above, implement deletion/retention policy, malware/content validation, observability, and operational backups. The current editor does not rewrite original PDF text objects. When an existing-text replacement or redaction is exported, the affected page is rasterized into a new PDF page image to remove the source text layer; this preserves visual appearance but makes all text on that page non-searchable/selectable until OCR is run again. Redaction is a destructive visual black-out of a selected existing text region followed by page rasterization; independently verify exported PDFs by text extraction, search, copy/paste, and visual inspection before sharing. This implementation is not a certified forensic sanitization tool and does not cover hidden attachments, embedded files, document portfolios, or external signatures. Do not claim native text-object editing or certified secure erasure.
+Before handling confidential/customer documents, finish production deployment, validate storage access with two accounts, configure retention/deletion and backup/restore, malware/content validation, monitoring/alerts, and operational incident procedures. The frontend cloud save flow and backend upload API are separate storage paths; test each independently.
