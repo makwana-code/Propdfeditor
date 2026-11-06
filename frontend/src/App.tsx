@@ -898,9 +898,12 @@ export default function App() {
           const dataUrl = canvas.toDataURL('image/png');
           const pngBytes = Uint8Array.from(atob(dataUrl.split(',')[1]), char => char.charCodeAt(0));
           const image = await sanitized.embedPng(pngBytes);
-          const originalSize = pdf.getPage(pageNumber - 1).getSize();
-          const page = sanitized.addPage([originalSize.width, originalSize.height]);
-          page.drawImage(image, { x: 0, y: 0, width: originalSize.width, height: originalSize.height });
+          // The PDF.js viewport already accounts for page rotation. Use its
+          // unscaled dimensions so rotated pages are not stretched or clipped.
+          const pageWidth = viewport.width / 2;
+          const pageHeight = viewport.height / 2;
+          const page = sanitized.addPage([pageWidth, pageHeight]);
+          page.drawImage(image, { x: 0, y: 0, width: pageWidth, height: pageHeight });
           canvas.width = 0;
           canvas.height = 0;
         }
