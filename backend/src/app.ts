@@ -66,7 +66,7 @@ function tokenHash(token: string) {
 }
 
 async function authorizeDocumentDownload(id: string, authorization: string | undefined) {
-  const match = authorization?.match(/^Bearer\\s+([A-Za-z0-9_-]{40,})$/i);
+  const match = authorization?.match(/^Bearer\s+([A-Za-z0-9_-]{40,})$/i);
   if (!match || !cloudStorage) return null;
   const result = await cloudStorage.from('backend_documents').select('id,object_path,token_hash').eq('id', id).maybeSingle();
   const record = result.data as {id:string;object_path:string;token_hash:string} | null;
