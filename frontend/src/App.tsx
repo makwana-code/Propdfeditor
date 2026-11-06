@@ -610,7 +610,7 @@ export default function App() {
     if (existing) {
       setSelectedId(existing.id);
       setTool('edit');
-      setStatus('This is a visual overlay only. The original PDF text remains in the file and may still be searchable or copyable; secure text replacement is not available yet.');
+      setStatus('Editing a replacement layer. The source PDF is unchanged until export; export rasterizes this entire page to remove its original text layer. This is not native text-object editing.');
       return;
     }
     const id = crypto.randomUUID();
@@ -631,7 +631,7 @@ export default function App() {
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
     setTool('edit');
-    setStatus('Text selected for visual overlay editing. The source text is not removed from the PDF; do not use this for confidential redaction.');
+    setStatus('Text selected for replacement. The original PDF remains unchanged until export; export rasterizes the affected page and removes its source text layer.');
   }
 
   function redactSelectedText() {
@@ -708,7 +708,7 @@ export default function App() {
     if (!pdfRef.current || !searchQuery.trim()) { setSearchResults([]); return; }
     const query=searchQuery.trim().toLowerCase(); const results:Array<{page:number;text:string}> = [];
     setBusy(true);
-    try { for(let p=1;p<=pdfRef.current.numPages;p++){ const pg=await pdfRef.current.getPage(p); const content=await pg.getTextContent(); const text=(content.items as any[]).map(item=>item.str||'').join(' '); if(text.toLowerCase().includes(query)){ const at=text.toLowerCase().indexOf(query); results.push({page:p,text:text.slice(Math.max(0,at-65),Math.min(text.length,at+query.length+100))}); } } setSearchResults(results); setStatus(results.length+' page(s) contain “'+searchQuery+'”.'); }
+    try { for(let p=1;p<=pdfRef.current.numPages;p++){ const pg=await pdfRef.current.getPage(p); const content=await pg.getTextContent(); const nativeText=(content.items as any[]).map(item=>item.str||'').join(' '); const recognizedText=ocrWords.filter(word=>word.page===p).map(word=>word.text).join(' '); const text=[nativeText,recognizedText].filter(Boolean).join(' '); if(text.toLowerCase().includes(query)){ const at=text.toLowerCase().indexOf(query); results.push({page:p,text:text.slice(Math.max(0,at-65),Math.min(text.length,at+query.length+100))}); } } setSearchResults(results); setStatus(results.length+' page(s) contain “'+searchQuery+'” in PDF text or OCR results.'); }
     catch(error){setStatus(error instanceof Error?error.message:'Search failed.');} finally{setBusy(false);}
   }
 
@@ -1003,7 +1003,7 @@ export default function App() {
 
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
       <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
-      <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click original PDF text, then type to replace it.')}}>✎ Edit Text</button>
+      <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click original PDF text to create a replacement. Export rasterizes the affected page to remove the original text layer.')}}>✎ Edit Text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setCommentDraft('');setTool('comment');setStatus('Comment mode: click the exact position on the PDF page, then enter your note.');}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
