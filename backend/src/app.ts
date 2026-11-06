@@ -92,6 +92,7 @@ app.post('/api/documents/upload', upload.single('file'), async (req, res, next) 
     if (objectUpload.error) throw objectUpload.error;
     const recordInsert = await cloudStorage.from('backend_documents').insert({ id, object_path: objectPath, original_name: path.basename(req.file.originalname).slice(0, 255), file_size: req.file.size, token_hash: tokenHash(downloadToken) });
     if (recordInsert.error) { await cloudStorage.storage.from(cloudBucket).remove([objectPath]); throw recordInsert.error; }
+    await removeFiles([req.file]);
     return res.status(201).json({
       document: {
         id,
