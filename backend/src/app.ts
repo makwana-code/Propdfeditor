@@ -9,8 +9,13 @@ import { mkdirSync } from 'node:fs';
 import crypto from 'node:crypto';
 import { fileTypeFromFile } from 'file-type';
 import { PDFDocument } from 'pdf-lib';
+import { createClient } from '@supabase/supabase-js';
 
 const app = express();
+const supabaseUrl = process.env.SUPABASE_URL;
+const supabaseServiceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+const cloudStorage = supabaseUrl && supabaseServiceRoleKey ? createClient(supabaseUrl, supabaseServiceRoleKey, { auth: { persistSession: false, autoRefreshToken: false } }) : null;
+const cloudBucket = process.env.SUPABASE_BUCKET || 'pdf-documents';
 const storageDir = path.resolve(process.env.STORAGE_DIR || './uploads');
 const maxUploadBytes = Math.max(1, Number(process.env.MAX_UPLOAD_MB || 50)) * 1024 * 1024;
 const allowedOrigins = (process.env.FRONTEND_URL || 'http://localhost:5173')
@@ -61,34 +66,32 @@ function tokenHash(token: string) {
 }
 
 async function authorizeDocumentDownload(id: string, authorization: string | undefined) {
-  const match = authorization?.match(/^Bearer\s+([A-Za-z0-9_-]{40,})$/i);
-  if (!match) return false;
-  const metadataPath = path.join(storageDir, `${id}.json`);
-  try {
-    const metadata = JSON.parse(await fs.readFile(metadataPath, 'utf8')) as { tokenHash?: string };
-    if (!metadata.tokenHash) return false;
-    const supplied = Buffer.from(tokenHash(match[1]), 'hex');
-    const expected = Buffer.from(metadata.tokenHash, 'hex');
-    return supplied.length === expected.length && crypto.timingSafeEqual(supplied, expected);
-  } catch {
-    return false;
-  }
+  const match = authorization?.match(/^Bearer\\s+([A-Za-z0-9_-]{40,})$/i);
+  if (!match || !cloudStorage) return null;
+  const result = await cloudStorage.from('backend_documents').select('id,object_path,token_hash').eq('id', id).maybeSingle();
+  const record = result.data as {id:string;object_path:string;token_hash:string} | null;
+  if (result.error || !record?.token_hash) return null;
+  const supplied = Buffer.from(tokenHash(match[1]), 'hex');
+  const expected = Buffer.from(record.token_hash, 'hex');
+  if (supplied.length !== expected.length || !crypto.timingSafeEqual(supplied, expected)) return null;
+  return record;
 }
-
-app.get('/api/health', (_req, res) => res.status(200).json({ status: 'ok', service: 'propdf-api' }));
+app.get('/api/health', (_req, res) => res.status(cloudStorage ? 200 : 503).json({ status: cloudStorage ? 'ok' : 'degraded', service: 'propdf-api', durableStorage: Boolean(cloudStorage) }));
 
 app.post('/api/documents/upload', upload.single('file'), async (req, res, next) => {
   if (!req.file) return res.status(400).json({ error: 'A PDF file is required in the "file" field.' });
+  if (!cloudStorage) { await removeFiles([req.file]); return res.status(503).json({ error: 'Durable cloud storage is not configured. Uploads are disabled to prevent data loss.' }); }
   try {
     await assertPdfSignature(req.file.path);
     const bytes = await fs.readFile(req.file.path);
     const pdf = await PDFDocument.load(bytes, { ignoreEncryption: false });
     const id = path.basename(req.file.filename, '.pdf');
     const downloadToken = crypto.randomBytes(32).toString('base64url');
-    await fs.writeFile(path.join(storageDir, `${id}.json`), JSON.stringify({
-      tokenHash: tokenHash(downloadToken),
-      createdAt: new Date().toISOString(),
-    }), { mode: 0o600 });
+    const objectPath = `${id}.pdf`;
+    const objectUpload = await cloudStorage.storage.from(cloudBucket).upload(objectPath, bytes, { contentType: 'application/pdf', upsert: false });
+    if (objectUpload.error) throw objectUpload.error;
+    const recordInsert = await cloudStorage.from('backend_documents').insert({ id, object_path: objectPath, original_name: path.basename(req.file.originalname).slice(0, 255), file_size: req.file.size, token_hash: tokenHash(downloadToken) });
+    if (recordInsert.error) { await cloudStorage.storage.from(cloudBucket).remove([objectPath]); throw recordInsert.error; }
     return res.status(201).json({
       document: {
         id,
@@ -109,18 +112,15 @@ app.post('/api/documents/upload', upload.single('file'), async (req, res, next) 
 
 app.get('/api/documents/:id/download', async (req, res) => {
   if (!/^[0-9a-f-]{36}$/i.test(req.params.id)) return res.status(400).json({ error: 'Invalid document ID.' });
-  const filePath = path.join(storageDir, `${req.params.id}.pdf`);
-  if (!await authorizeDocumentDownload(req.params.id, req.header('authorization'))) {
-    return res.status(401).json({ error: 'A valid document download token is required.' });
-  }
-  try {
-    await fs.access(filePath);
-    return res.download(filePath, 'document.pdf');
-  } catch {
-    return res.status(404).json({ error: 'Document not found.' });
-  }
+  if (!cloudStorage) return res.status(503).json({ error: 'Durable cloud storage is not configured.' });
+  const record = await authorizeDocumentDownload(req.params.id, req.header('authorization'));
+  if (!record) return res.status(401).json({ error: 'A valid document download token is required.' });
+  const downloaded = await cloudStorage.storage.from(cloudBucket).download(record.object_path);
+  if (downloaded.error || !downloaded.data) return res.status(404).json({ error: 'Document not found.' });
+  res.setHeader('Content-Type', 'application/pdf');
+  res.setHeader('Content-Disposition', 'attachment; filename="document.pdf"');
+  return res.status(200).send(Buffer.from(await downloaded.data.arrayBuffer()));
 });
-
 app.post('/api/pdf/merge', upload.array('files', 10), async (req, res) => {
   const files = (req.files as Express.Multer.File[] | undefined) || [];
   if (files.length < 2) {
