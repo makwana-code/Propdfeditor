@@ -880,6 +880,13 @@ export default function App() {
         const renderedPdf = await pdfjs.getDocument({ data: bytes }).promise;
         const sanitized = await PDFDocument.create();
         for (let pageNumber = 1; pageNumber <= renderedPdf.numPages; pageNumber++) {
+          if (!replacementPages.has(pageNumber)) {
+            // Preserve unaffected pages as real PDF pages so their text, links,
+            // vector graphics, forms and OCR layer remain intact and searchable.
+            const [copiedPage] = await sanitized.copyPages(pdf, [pageNumber - 1]);
+            sanitized.addPage(copiedPage);
+            continue;
+          }
           const sourcePage = await renderedPdf.getPage(pageNumber);
           const viewport = sourcePage.getViewport({ scale: 2 });
           const canvas = window.document.createElement('canvas');
@@ -898,15 +905,8 @@ export default function App() {
           canvas.height = 0;
         }
         await renderedPdf.destroy();
-        // Keep OCR text on pages that were not sanitized. On sanitized pages,
-        // omit OCR text so removed source words cannot be reintroduced invisibly.
-        const ocrFont = await sanitized.embedFont(StandardFonts.Helvetica);
-        for (const word of ocrWords) {
-          if (replacementPages.has(word.page)) continue;
-          const target = sanitized.getPage(word.page - 1);
-          const { height } = target.getSize();
-          target.drawText(word.text, { x: word.x, y: height - word.y - word.height, size: Math.max(4, Math.min(18, word.height * 0.82)), font: ocrFont, color: rgb(0,0,0), opacity: 0, maxWidth: Math.max(1, word.width), lineHeight: Math.max(4, word.height) });
-        }
+        // OCR text on unaffected pages is retained by copyPages above. OCR text
+        // on flattened pages is intentionally omitted to avoid restoring redacted words.
         bytes = await sanitized.save();
       }
 
