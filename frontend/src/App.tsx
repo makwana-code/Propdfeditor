@@ -678,10 +678,10 @@ export default function App() {
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Could not create an OCR canvas for page ' + pageNumber + '.');
         await pdfPage.render({ canvasContext: context, viewport }).promise;
-        const result = await worker.recognize(canvas);
+        const result: any = await worker.recognize(canvas);
         const text = result.data.text.trim();
         if (text) extracted[pageNumber] = text;
-        const words = (result.data.words || []).filter(word => word.text?.trim() && word.confidence >= 35).map(word => ({
+        const words = (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 35).map((word: any) => ({
           text: word.text.trim(),
           x: Math.max(0, Math.min(1, word.bbox.x0 / viewport.width)),
           y: Math.max(0, Math.min(1, word.bbox.y0 / viewport.height)),
