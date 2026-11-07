@@ -270,7 +270,7 @@ export default function App() {
   const [document, setDocument] = useState<PdfDocument | null>(null);
   const [cloudUser, setCloudUser] = useState<{id:string;email?:string}|null>(null);
   const [page, setPage] = useState(1);
-  const [continuousView, setContinuousView] = useState(true);
+  const [continuousView, setContinuousView] = useState(false);
   const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
@@ -571,7 +571,7 @@ export default function App() {
       const bytes = await file.arrayBuffer();
       const parsed = await PDFDocument.load(bytes);
       setDocument({ file, bytes, pages: parsed.getPageCount() });
-      setContinuousView(true);
+      setContinuousView(false);
       const loading = pdfjs.getDocument({data:new Uint8Array(bytes.slice(0))});
       const pdfView = await loading.promise;
       const outline = await pdfView.getOutline();
