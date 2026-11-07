@@ -683,7 +683,7 @@ export default function App() {
       setOcrPages(old => ({ ...old, ...extracted }));
       const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
       setSearchResults(found);
-      setSearchQuery(found.length ? found[0].text.split(/\\s+/).slice(0,6).join(' ') : '');
+      setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
       setActivePanel('search');
       setStatus('Full-document OCR completed. Recognized text is searchable across ' + pdf.numPages + ' page(s).');
     } catch (error) {
@@ -730,9 +730,9 @@ export default function App() {
       if (a.coverOriginal && typeof patch.text === 'string') {
         const pageWidth = canvasRef.current?.clientWidth || pageSizeRef.current.width || 1;
         const fontPx = Math.max(6, a.size * fitZoom * zoom / 10000);
-        const longestLine = Math.max(...patch.text.split('\\n').map(line => line.length), 1);
+        const longestLine = Math.max(...patch.text.split('\n').map(line => line.length), 1);
         const estimatedWidth = (longestLine * fontPx * .58 + 6) / pageWidth;
-        const lineCount = Math.max(1, patch.text.split('\\n').length);
+        const lineCount = Math.max(1, patch.text.split('\n').length);
         const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / (canvasRef.current?.clientHeight || pageSizeRef.current.height || 1);
         next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
         next.h = Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
