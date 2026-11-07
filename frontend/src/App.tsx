@@ -571,6 +571,7 @@ export default function App() {
       const bytes = await file.arrayBuffer();
       const parsed = await PDFDocument.load(bytes);
       setDocument({ file, bytes, pages: parsed.getPageCount() });
+      setContinuousView(true);
       const loading = pdfjs.getDocument({data:new Uint8Array(bytes.slice(0))});
       const pdfView = await loading.promise;
       const outline = await pdfView.getOutline();
