@@ -261,6 +261,7 @@ function fontStyleFor(annotation: TextAnnotation) {
 type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
+type OcrWord = { text: string; x: number; y: number; w: number; h: number };
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
 type EditorSnapshot = { annotations: TextAnnotation[]; comments: PdfComment[]; strokes: DrawStroke[] };
 type ResizeSession = { id: string; edge: string; startX: number; startY: number; start: TextAnnotation; pageWidth: number; pageHeight: number };
@@ -304,6 +305,7 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{page:number;text:string}>>([]);
   const [ocrPages, setOcrPages] = useState<Record<number,string>>({});
+  const [ocrWords, setOcrWords] = useState<Record<number,OcrWord[]>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
@@ -339,13 +341,13 @@ export default function App() {
     if (!cloudUser) { await signInOrUp(); return; }
     if (document.bytes.byteLength > 50*1024*1024) { setStatus('PDF exceeds the 50 MB cloud limit.'); return; }
     setBusy(true); setStatus('Saving PDF and edit progress to your private cloud…');
-    try { const safeName=document.file.name.replace(/[^a-zA-Z0-9._-]/g,'_'); const path=cloudUser.id+'/'+crypto.randomUUID()+'-'+safeName; const upload=await supabase.storage.from('pdf-documents').upload(path,new Blob([document.bytes.slice(0)],{type:'application/pdf'}),{contentType:'application/pdf'}); if(upload.error) throw upload.error; const record=await supabase.from('saved_documents').insert({user_id:cloudUser.id,file_name:document.file.name,storage_path:path,file_size:document.bytes.byteLength,editor_state:{page,zoom,annotations,comments,strokes}}); if(record.error) { await supabase.storage.from('pdf-documents').remove([path]); throw record.error; } setStatus('Saved privately to ProPDF Cloud with your current edits.'); }
+    try { const safeName=document.file.name.replace(/[^a-zA-Z0-9._-]/g,'_'); const path=cloudUser.id+'/'+crypto.randomUUID()+'-'+safeName; const upload=await supabase.storage.from('pdf-documents').upload(path,new Blob([document.bytes.slice(0)],{type:'application/pdf'}),{contentType:'application/pdf'}); if(upload.error) throw upload.error; const record=await supabase.from('saved_documents').insert({user_id:cloudUser.id,file_name:document.file.name,storage_path:path,file_size:document.bytes.byteLength,editor_state:{page,zoom,annotations,comments,strokes,ocrPages,ocrWords}}); if(record.error) { await supabase.storage.from('pdf-documents').remove([path]); throw record.error; } setStatus('Saved privately to ProPDF Cloud with your current edits.'); }
     catch(error) { setStatus(error instanceof Error ? 'Cloud save failed: '+error.message : 'Cloud save failed.'); } finally { setBusy(false); }
   }
   async function openFromCloud() {
     if (!supabase || !cloudUser) { await signInOrUp(); return; }
     setBusy(true);
-    try { const {data,error}=await supabase.from('saved_documents').select('file_name,storage_path,editor_state,created_at').order('created_at',{ascending:false}).limit(30); if(error) throw error; if(!data?.length) { setStatus('No cloud documents found.'); return; } const promptText='Choose document number:\n'+data.map((item,index)=>(index+1)+'. '+item.file_name+' — '+new Date(item.created_at).toLocaleString()).join('\n'); const choice=window.prompt(promptText,'1'); if(choice===null) return; const record=data[Number(choice)-1]; if(!record) throw new Error('Invalid document number.'); const downloaded=await supabase.storage.from('pdf-documents').download(record.storage_path); if(downloaded.error) throw downloaded.error; await openPdf(new File([downloaded.data],record.file_name,{type:'application/pdf'})); const state=record.editor_state as any; setAnnotations(state.annotations||[]); setComments(state.comments||[]); setStrokes(state.strokes||[]); if(state.page) setPage(state.page); if(state.zoom) setZoom(state.zoom); setStatus('Loaded '+record.file_name+' from your private cloud.'); }
+    try { const {data,error}=await supabase.from('saved_documents').select('file_name,storage_path,editor_state,created_at').order('created_at',{ascending:false}).limit(30); if(error) throw error; if(!data?.length) { setStatus('No cloud documents found.'); return; } const promptText='Choose document number:\n'+data.map((item,index)=>(index+1)+'. '+item.file_name+' — '+new Date(item.created_at).toLocaleString()).join('\n'); const choice=window.prompt(promptText,'1'); if(choice===null) return; const record=data[Number(choice)-1]; if(!record) throw new Error('Invalid document number.'); const downloaded=await supabase.storage.from('pdf-documents').download(record.storage_path); if(downloaded.error) throw downloaded.error; await openPdf(new File([downloaded.data],record.file_name,{type:'application/pdf'})); const state=record.editor_state as any; setAnnotations(state.annotations||[]); setComments(state.comments||[]); setStrokes(state.strokes||[]); setOcrPages(state.ocrPages||{}); setOcrWords(state.ocrWords||{}); if(state.page) setPage(state.page); if(state.zoom) setZoom(state.zoom); setStatus('Loaded '+record.file_name+' from your private cloud.'); }
     catch(error) { setStatus(error instanceof Error ? 'Cloud open failed: '+error.message : 'Cloud open failed.'); } finally { setBusy(false); }
   }
   async function signOutCloud() { if(!supabase) return; const {error}=await supabase.auth.signOut(); setStatus(error ? error.message : 'Signed out of ProPDF Cloud.'); }
@@ -575,7 +577,7 @@ export default function App() {
       const entries:Array<{title:string;page:number}> = [];
       const visit = async (nodes:any[]) => { for (const node of nodes || []) { let target:any=node.dest; if (typeof target === 'string') target=await pdfView.getDestination(target); let targetPage=1; if (Array.isArray(target) && target[0]) { try { targetPage=(await pdfView.getPageIndex(target[0]))+1; } catch {} } entries.push({title:String(node.title||'Untitled bookmark'),page:targetPage}); if (node.items?.length) await visit(node.items); } };
       await visit(outline || []); setBookmarks(entries); setSearchResults([]); setTextHits([]);
-      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
+      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); setOcrWords({}); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
       setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages');
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
@@ -664,6 +666,7 @@ export default function App() {
       })();
       worker = await createWorker('eng');
       const extracted: Record<number,string> = {};
+      const positionedWords: Record<number,OcrWord[]> = {};
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         setStatus('OCR processing page ' + pageNumber + ' of ' + pdf.numPages + '…');
         const pdfPage = await pdf.getPage(pageNumber);
@@ -677,10 +680,19 @@ export default function App() {
         const result = await worker.recognize(canvas);
         const text = result.data.text.trim();
         if (text) extracted[pageNumber] = text;
+        const words = (result.data.words || []).filter(word => word.text?.trim() && word.confidence >= 35).map(word => ({
+          text: word.text.trim(),
+          x: Math.max(0, Math.min(1, word.bbox.x0 / viewport.width)),
+          y: Math.max(0, Math.min(1, word.bbox.y0 / viewport.height)),
+          w: Math.max(0, Math.min(1, (word.bbox.x1 - word.bbox.x0) / viewport.width)),
+          h: Math.max(0, Math.min(1, (word.bbox.y1 - word.bbox.y0) / viewport.height))
+        }));
+        if (words.length) positionedWords[pageNumber] = words;
         canvas.width = 0;
         canvas.height = 0;
       }
       setOcrPages(old => ({ ...old, ...extracted }));
+      setOcrWords(old => ({ ...old, ...positionedWords }));
       const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
@@ -846,6 +858,24 @@ export default function App() {
         for (let i=1;i<stroke.points.length;i++) {
           const a=stroke.points[i-1], b=stroke.points[i];
           target.drawLine({ start:{x:a.x*width,y:height-a.y*height}, end:{x:b.x*width,y:height-b.y*height}, thickness:stroke.width, color, opacity:1 });
+        }
+      }
+      // Embed OCR text invisibly so scanned pages become searchable in exported PDFs.
+      const ocrFont = await pdf.embedFont(StandardFonts.Helvetica);
+      for (const [pageNumber, words] of Object.entries(ocrWords)) {
+        const target = pdf.getPage(Number(pageNumber) - 1);
+        const { width, height } = target.getSize();
+        for (const word of words) {
+          if (!word.text || word.w <= 0 || word.h <= 0) continue;
+          const size = Math.max(3, Math.min(48, word.h * height * 0.82));
+          target.drawText(word.text, {
+            x: word.x * width,
+            y: height - (word.y + word.h) * height + size * 0.08,
+            size,
+            font: ocrFont,
+            opacity: 0,
+            maxWidth: Math.max(1, word.w * width * 1.15)
+          });
         }
       }
       const commentFont = await pdf.embedFont(StandardFonts.Helvetica);
