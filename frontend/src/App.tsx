@@ -258,7 +258,7 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
+type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number };
@@ -612,7 +612,7 @@ export default function App() {
     if (existing) {
       setSelectedId(existing.id);
       setTool('edit');
-      setStatus('Editing this original text. The white replacement layer hides the old characters.');
+      setStatus('Original text selected. Type your replacement; the background mask and text box will adjust as needed.');
       return;
     }
     const id = crypto.randomUUID();
@@ -625,8 +625,26 @@ export default function App() {
     const boxY = Math.max(0, hit.y - padY);
     const boxW = Math.min(1 - boxX, Math.max(.012, hit.w + padX * 2));
     const boxH = Math.min(1 - boxY, Math.max(.012, hit.h + padY * 2));
+    // Sample nearby page pixels so replacement masks match white or tinted cells.
+    let maskColor = '#ffffff';
+    const canvas = canvasRef.current;
+    if (canvas && canvas.width && canvas.height) {
+      const ctx = canvas.getContext('2d');
+      if (ctx) {
+        const px = hit.x * canvas.width, py = hit.y * canvas.height;
+        const pw = hit.w * canvas.width, ph = hit.h * canvas.height;
+        const samples = [[px - 2, py + ph * .5], [px + pw + 2, py + ph * .5], [px + pw * .5, py - 2], [px + pw * .5, py + ph + 2]];
+        const colors = samples.map(([sx, sy]) => {
+          const x = Math.max(0, Math.min(canvas.width - 1, Math.round(sx)));
+          const y = Math.max(0, Math.min(canvas.height - 1, Math.round(sy)));
+          const pixel = ctx.getImageData(x, y, 1, 1).data;
+          return { hex: '#' + [pixel[0], pixel[1], pixel[2]].map(v => v.toString(16).padStart(2, '0')).join(''), light: pixel[0] + pixel[1] + pixel[2] };
+        });
+        maskColor = colors.sort((a, b) => b.light - a.light)[0]?.hex || maskColor;
+      }
+    }
     const annotation: TextAnnotation = {
-      id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH,
+      id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
       color: '#222222', styleId: 'body', align: 'left', coverOriginal: true, sourceHitId: hit.id
     };
@@ -813,7 +831,11 @@ export default function App() {
         }
         const x = annotation.x * width;
         const top = annotation.y * height;
-        if (annotation.coverOriginal) target.drawRectangle({x:x-1,y:height-top-annotation.h*height-1,width:annotation.w*width+2,height:annotation.h*height+2,color:rgb(1,1,1),borderWidth:0});
+        if (annotation.coverOriginal) {
+          const mask = annotation.maskColor || '#ffffff';
+          const maskRgb = rgb(parseInt(mask.slice(1,3),16)/255, parseInt(mask.slice(3,5),16)/255, parseInt(mask.slice(5,7),16)/255);
+          target.drawRectangle({x:x-0.35,y:height-top-annotation.h*height-0.35,width:annotation.w*width+0.7,height:annotation.h*height+0.7,color:maskRgb,borderWidth:0});
+        }
         const size = annotation.size;
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
         const boxWidth = Math.max(1, annotation.w * width);
@@ -1054,7 +1076,7 @@ export default function App() {
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {tool==='edit' ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
-            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default'}} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
+            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
               <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)} />
               <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit' && e.button===0)beginMove(e,a)}} onPointerUp={e=>{if(tool==='edit')saveResizedBox(a.id,e.currentTarget)}} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).filter(edge=>!a.coverOriginal || ['e','s','se'].includes(edge)).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
