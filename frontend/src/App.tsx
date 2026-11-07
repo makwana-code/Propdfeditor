@@ -303,6 +303,7 @@ export default function App() {
   const [textHits, setTextHits] = useState<PdfTextHit[]>([]);
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{page:number;text:string}>>([]);
+  const [ocrPages, setOcrPages] = useState<Record<number,string>>({});
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
@@ -574,7 +575,7 @@ export default function App() {
       const entries:Array<{title:string;page:number}> = [];
       const visit = async (nodes:any[]) => { for (const node of nodes || []) { let target:any=node.dest; if (typeof target === 'string') target=await pdfView.getDestination(target); let targetPage=1; if (Array.isArray(target) && target[0]) { try { targetPage=(await pdfView.getPageIndex(target[0]))+1; } catch {} } entries.push({title:String(node.title||'Untitled bookmark'),page:targetPage}); if (node.items?.length) await visit(node.items); } };
       await visit(outline || []); setBookmarks(entries); setSearchResults([]); setTextHits([]);
-      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setStrokes([]); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
+      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
       setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages');
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
@@ -653,28 +654,71 @@ export default function App() {
   }
 
   async function runOcr() {
-    const canvas = canvasRef.current;
-    if (!document || !canvas) { setStatus('Open a PDF page before running OCR.'); return; }
-    setBusy(true); setStatus('Running OCR on page ' + page + '…');
+    if (!document) { setStatus('Open a PDF before running OCR.'); return; }
+    setBusy(true);
     let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
     try {
+      const pdf = pdfRef.current || await (async () => {
+        const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
+        return await task.promise;
+      })();
       worker = await createWorker('eng');
-      const result = await worker.recognize(canvas);
-      const text = result.data.text.trim();
-      if (!text) { setStatus('OCR completed: no readable text was detected on this page.'); return; }
-      setSearchQuery(text.split(/\\s+/).slice(0,8).join(' '));
-      setSearchResults([{page,text:text.slice(0,500)}]);
+      const extracted: Record<number,string> = {};
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+        setStatus('OCR processing page ' + pageNumber + ' of ' + pdf.numPages + '…');
+        const pdfPage = await pdf.getPage(pageNumber);
+        const viewport = pdfPage.getViewport({ scale: 1.6 });
+        const canvas = window.document.createElement('canvas');
+        canvas.width = Math.ceil(viewport.width);
+        canvas.height = Math.ceil(viewport.height);
+        const context = canvas.getContext('2d');
+        if (!context) throw new Error('Could not create an OCR canvas for page ' + pageNumber + '.');
+        await pdfPage.render({ canvasContext: context, viewport }).promise;
+        const result = await worker.recognize(canvas);
+        const text = result.data.text.trim();
+        if (text) extracted[pageNumber] = text;
+        canvas.width = 0;
+        canvas.height = 0;
+      }
+      setOcrPages(old => ({ ...old, ...extracted }));
+      const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
+      setSearchResults(found);
+      setSearchQuery(found.length ? found[0].text.split(/\\s+/).slice(0,6).join(' ') : '');
       setActivePanel('search');
-      setStatus('OCR completed for page ' + page + '. Extracted text is shown in Search.');
-    } catch (error) { setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.'); }
-    finally { if (worker) await worker.terminate(); setBusy(false); }
+      setStatus('Full-document OCR completed. Recognized text is searchable across ' + pdf.numPages + ' page(s).');
+    } catch (error) {
+      setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
+    } finally {
+      if (worker) await worker.terminate();
+      setBusy(false);
+    }
   }
   async function runSearch() {
-    if (!pdfRef.current || !searchQuery.trim()) { setSearchResults([]); return; }
-    const query=searchQuery.trim().toLowerCase(); const results:Array<{page:number;text:string}> = [];
+    if (!document || !searchQuery.trim()) { setSearchResults([]); return; }
+    const query = searchQuery.trim().toLowerCase();
+    const results: Array<{page:number;text:string}> = [];
     setBusy(true);
-    try { for(let p=1;p<=pdfRef.current.numPages;p++){ const pg=await pdfRef.current.getPage(p); const content=await pg.getTextContent(); const text=(content.items as any[]).map(item=>item.str||'').join(' '); if(text.toLowerCase().includes(query)){ const at=text.toLowerCase().indexOf(query); results.push({page:p,text:text.slice(Math.max(0,at-65),Math.min(text.length,at+query.length+100))}); } } setSearchResults(results); setStatus(results.length+' page(s) contain “'+searchQuery+'”.'); }
-    catch(error){setStatus(error instanceof Error?error.message:'Search failed.');} finally{setBusy(false);}
+    try {
+      const pdf = pdfRef.current || await (async () => {
+        const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
+        return await task.promise;
+      })();
+      for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+        const pdfPage = await pdf.getPage(pageNumber);
+        const content = await pdfPage.getTextContent();
+        const embeddedText = (content.items as any[]).map(item => item.str || '').join(' ');
+        const text = [embeddedText, ocrPages[pageNumber] || ''].filter(Boolean).join(' ');
+        const lower = text.toLowerCase();
+        const at = lower.indexOf(query);
+        if (at >= 0) results.push({ page:pageNumber, text:text.slice(Math.max(0,at-65), Math.min(text.length,at+query.length+100)) });
+      }
+      setSearchResults(results);
+      setStatus(results.length + ' page(s) contain “' + searchQuery + '”.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Search failed.');
+    } finally {
+      setBusy(false);
+    }
   }
 
   function updateAnnotation(id: string, patch: Partial<TextAnnotation>) {
@@ -811,8 +855,12 @@ export default function App() {
         const cardWidth = width * 0.24;
         const cardHeight = Math.max(34, height * 0.075);
         const anchor = { x: comment.x * width, y: height - comment.y * height };
-        const cardX = Math.max(4, Math.min(width - cardWidth - 4, anchor.x + width * 0.025));
-        const cardY = Math.max(4, Math.min(height - cardHeight - 4, anchor.y - cardHeight / 2));
+        // Preserve the user's dragged comment-card position in the exported PDF.
+        // boxX/boxY are normalized top-left coordinates in the on-screen page.
+        const requestedX = (comment.boxX ?? Math.min(.74, Math.max(.02, comment.x + .02))) * width;
+        const requestedTop = (comment.boxY ?? Math.min(.88, Math.max(.02, comment.y + .01))) * height;
+        const cardX = Math.max(4, Math.min(width - cardWidth - 4, requestedX));
+        const cardY = Math.max(4, Math.min(height - cardHeight - 4, height - requestedTop - cardHeight));
         const connectorEnd = { x: cardX, y: cardY + cardHeight / 2 };
         const commentColor = rgb(0.82, 0.54, 0.15);
         target.drawLine({ start: anchor, end: connectorEnd, thickness: 1.4, color: commentColor });
@@ -930,7 +978,7 @@ export default function App() {
       <label className="toolbar-page">Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
-      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>OCR current page</button>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'OCR all pages'}</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
