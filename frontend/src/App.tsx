@@ -270,7 +270,7 @@ export default function App() {
   const [document, setDocument] = useState<PdfDocument | null>(null);
   const [cloudUser, setCloudUser] = useState<{id:string;email?:string}|null>(null);
   const [page, setPage] = useState(1);
-  const [continuousView, setContinuousView] = useState(false);
+  const [continuousView, setContinuousView] = useState(true);
   const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
@@ -977,6 +977,7 @@ export default function App() {
       const bytes = await merged.save();
       const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
       const a = window.document.createElement('a'); a.href = url; a.download = 'merged.pdf'; a.click(); URL.revokeObjectURL(url);
+      setMergeFiles([]);
       setStatus('Merged ' + mergeFiles.length + ' PDFs successfully.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Merge failed.'); }
     finally { setBusy(false); }
@@ -1012,6 +1013,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
+      <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{setMergeFiles(Array.from(event.target.files||[]));event.currentTarget.value='';}} /></label>
       <button className="toolbar-button" disabled={mergeFiles.length<2||busy} onClick={()=>void mergePdfs()}>Merge ({mergeFiles.length})</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
