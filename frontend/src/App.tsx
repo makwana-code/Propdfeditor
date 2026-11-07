@@ -962,7 +962,11 @@ export default function App() {
       setDocument({ file, bytes: new Uint8Array(bytes).buffer as ArrayBuffer, pages: pdf.getPageCount() });
       setAnnotations(old => old.filter(a => a.page !== page).map(a => a.page > page ? { ...a, page: a.page - 1 } : a));
       setComments(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
-      setPage(p => Math.min(p, pdf.getPageCount())); setSelectedId(null); setStatus('Page deleted.');
+      setStrokes(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
+      setOcrPages(old => Object.fromEntries(Object.entries(old).filter(([key]) => Number(key) !== page).map(([key, value]) => [String(Number(key) > page ? Number(key) - 1 : Number(key)), value])));
+      setOcrWords(old => Object.fromEntries(Object.entries(old).filter(([key]) => Number(key) !== page).map(([key, value]) => [String(Number(key) > page ? Number(key) - 1 : Number(key)), value])));
+      setBookmarks(old => old.filter(item => item.page !== page).map(item => item.page > page ? { ...item, page: item.page - 1 } : item));
+      setPage(p => Math.min(p, pdf.getPageCount())); setSelectedId(null); setStatus('Page deleted. Page-linked text, comments, drawings, OCR data and bookmarks were adjusted.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not delete page.'); }
   }
 
