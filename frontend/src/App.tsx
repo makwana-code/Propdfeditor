@@ -424,9 +424,9 @@ export default function App() {
         const content = await pdfPage.getTextContent();
         const hits: PdfTextHit[] = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim()).map((item:any,index:number) => {
           const transform = pdfjs.Util.transform(viewport.transform, item.transform);
-          const itemHeight = Math.max(8, Math.hypot(transform[2], transform[3]));
-          const itemWidth = Math.max(8, (item.width || item.str.length * itemHeight * .45) * viewport.scale);
-          return { id: page + '-' + index, page, text:item.str, x:Math.max(0,transform[4]/viewport.width), y:Math.max(0,(transform[5]-itemHeight)/viewport.height), w:Math.min(1,itemWidth/viewport.width), h:Math.min(1,itemHeight*1.35/viewport.height), fontSize:itemHeight/Math.max(.01,viewport.scale) };
+          const itemHeight = Math.max(5, (item.height || Math.hypot(transform[2], transform[3]) / viewport.scale) * viewport.scale);
+          const itemWidth = Math.max(4, (item.width || item.str.length * itemHeight / viewport.scale * .45) * viewport.scale);
+          return { id: page + '-' + index, page, text:item.str, x:Math.max(0,transform[4]/viewport.width), y:Math.max(0,(transform[5]-itemHeight)/viewport.height), w:Math.min(1,itemWidth/viewport.width), h:Math.min(1,itemHeight*1.12/viewport.height), fontSize:itemHeight/Math.max(.01,viewport.scale) };
         });
         if (!cancelled) setTextHits(hits);
       } catch (error) {
@@ -619,8 +619,8 @@ export default function App() {
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
     // PDF.js gives the baseline-based text bounds. Expand slightly upward/downward
     // so the opaque replacement layer fully covers glyph ascenders and descenders.
-    const padX = Math.max(.001, Math.min(.003, hit.h * .08));
-    const padY = Math.max(.0015, Math.min(.0035, hit.h * .18));
+    const padX = Math.max(.00025, Math.min(.001, hit.h * .035));
+    const padY = Math.max(.0003, Math.min(.001, hit.h * .04));
     const boxX = Math.max(0, hit.x - padX);
     const boxY = Math.max(0, hit.y - padY);
     const boxW = Math.min(1 - boxX, Math.max(.012, hit.w + padX * 2));
