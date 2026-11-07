@@ -659,7 +659,7 @@ export default function App() {
   async function runOcr() {
     if (!document) { setStatus('Open a PDF before running OCR.'); return; }
     setBusy(true);
-    let worker: Awaited<ReturnType<typeof createWorker>> | null = null;
+    let worker: any = null;
     try {
       const pdf = pdfRef.current || await (async () => {
         const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
