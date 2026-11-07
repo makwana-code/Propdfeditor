@@ -4,7 +4,7 @@ import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
 import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
-import { createWorker } from 'tesseract.js';
+
 import { createClient } from '@supabase/supabase-js';
 const supabaseUrl = import.meta.env.VITE_SUPABASE_URL as string | undefined;
 const supabaseKey = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined;
@@ -665,6 +665,7 @@ export default function App() {
         const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
         return await task.promise;
       })();
+      const { createWorker } = await import('tesseract.js');
       worker = await createWorker('eng');
       const extracted: Record<number,string> = {};
       const positionedWords: Record<number,OcrWord[]> = {};
