@@ -152,7 +152,7 @@
   display:block!important;width:100%!important;height:100%!important;
   min-width:0!important;min-height:0!important;margin:0!important;padding:0!important;
   border:0!important;outline:0!important;resize:none!important;overflow:hidden!important;
-  background:#fff!important;color:inherit!important;line-height:1.05!important;
+  background:var(--source-mask-color,#fff)!important;color:inherit!important;line-height:1.05!important;
   white-space:pre-wrap!important;box-shadow:none!important;
 }
 .pdf-annotation.source-text-edit.selected{outline:1px dashed #7da8d8!important;outline-offset:1px}
