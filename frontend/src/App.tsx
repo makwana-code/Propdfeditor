@@ -259,7 +259,7 @@ function fontStyleFor(annotation: TextAnnotation) {
 };
 
 type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
-type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number };
+type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; color?: string };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number };
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
@@ -422,17 +422,37 @@ export default function App() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         await pdfPage.render({ canvasContext: ctx, viewport }).promise;
         const content = await pdfPage.getTextContent();
-        const hits: PdfTextHit[] = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform)).map((item:any,index:number) => {
-          // Convert PDF.js baseline coordinates into a generous, touch-friendly page hitbox.
-          const transform = pdfjs.Util.transform(viewport.transform, item.transform);
-          const glyphHeight = Math.max(3, Math.hypot(transform[2], transform[3]));
-          const glyphWidth = Math.max(4, (Number(item.width) || item.str.length * glyphHeight * .45) * viewport.scale);
-          const left = Math.max(0, transform[4] - 2);
-          const top = Math.max(0, transform[5] - glyphHeight * 1.22 - 2);
-          const right = Math.min(viewport.width, transform[4] + glyphWidth + 3);
-          const bottom = Math.min(viewport.height, transform[5] + glyphHeight * .22 + 2);
-          return { id: page + '-' + index, page, text:item.str, x:left/viewport.width, y:top/viewport.height, w:Math.max(.004,(right-left)/viewport.width), h:Math.max(.012,(bottom-top)/viewport.height), fontSize:glyphHeight/Math.max(.01,viewport.scale) };
-        });
+        const hits: PdfTextHit[] = (content.items as any[])
+          .filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform))
+          .map((item:any,index:number) => {
+            // Build the hit rectangle from all four transformed text corners. This also
+            // supports rotated/skewed text instead of assuming every run is horizontal.
+            const m = pdfjs.Util.transform(viewport.transform, item.transform);
+            const glyphHeight = Math.max(3, Math.hypot(m[2], m[3]));
+            const ux = Math.hypot(m[0], m[1]) || 1;
+            const vx = Math.hypot(m[2], m[3]) || glyphHeight;
+            const glyphWidth = Math.max(4, (Number(item.width) || item.str.length * glyphHeight * .45) * viewport.scale);
+            const uxX = m[0] / ux, uxY = m[1] / ux;
+            const vxX = m[2] / vx, vxY = m[3] / vx;
+            const x0 = m[4], y0 = m[5];
+            const corners = [
+              [x0, y0], [x0 + uxX * glyphWidth, y0 + uxY * glyphWidth],
+              [x0 + vxX * glyphHeight, y0 + vxY * glyphHeight],
+              [x0 + uxX * glyphWidth + vxX * glyphHeight, y0 + uxY * glyphWidth + vxY * glyphHeight]
+            ];
+            const pad = Math.max(2, Math.min(5, glyphHeight * .12));
+            const left = Math.max(0, Math.min(...corners.map(p=>p[0])) - pad);
+            const top = Math.max(0, Math.min(...corners.map(p=>p[1])) - pad);
+            const right = Math.min(viewport.width, Math.max(...corners.map(p=>p[0])) + pad);
+            const bottom = Math.min(viewport.height, Math.max(...corners.map(p=>p[1])) + pad);
+            return {
+              id: page + '-' + index, page, text:item.str,
+              x:left/viewport.width, y:top/viewport.height,
+              w:Math.max(.004,(right-left)/viewport.width),
+              h:Math.max(.012,(bottom-top)/viewport.height),
+              fontSize:glyphHeight/Math.max(.01,viewport.scale)
+            };
+          });
         if (!cancelled && hits.length) {
           setTextHits(hits);
         } else if (!cancelled) {
@@ -670,6 +690,53 @@ export default function App() {
     }
   }
 
+  function sampleTextAppearance(hit: PdfTextHit) {
+    const canvas = canvasRef.current;
+    if (!canvas || !canvas.width || !canvas.height) return { maskColor:'#ffffff', color:'#222222' };
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return { maskColor:'#ffffff', color:'#222222' };
+    const x = hit.x * canvas.width, y = hit.y * canvas.height;
+    const w = Math.max(2, hit.w * canvas.width), h = Math.max(2, hit.h * canvas.height);
+    const margin = Math.max(2, Math.round((window.devicePixelRatio || 1) * 2));
+    const buckets = new Map<string,{count:number;rgb:[number,number,number]}>();
+    const add = (data:Uint8ClampedArray) => {
+      const rgbValue:[number,number,number] = [data[0],data[1],data[2]];
+      const key = rgbValue.map(v=>Math.round(v/12)).join(',');
+      const old = buckets.get(key) || {count:0,rgb:rgbValue};
+      old.count++; buckets.set(key,old);
+    };
+    // Sample a perimeter outside the glyphs. It is less likely to mistake
+    // antialiased letter pixels for the page/cell background.
+    const steps = 24;
+    for (let i=0;i<=steps;i++) {
+      const t=i/steps;
+      for (const [sx,sy] of [[x+w*t,y-margin],[x+w*t,y+h+margin],[x-margin,y+h*t],[x+w+margin,y+h*t]]) {
+        const px=Math.max(0,Math.min(canvas.width-1,Math.round(sx)));
+        const py=Math.max(0,Math.min(canvas.height-1,Math.round(sy)));
+        add(ctx.getImageData(px,py,1,1).data);
+      }
+    }
+    const bgEntry=[...buckets.values()].sort((a,b)=>b.count-a.count)[0];
+    const bg=bgEntry?.rgb || [255,255,255];
+    const bgL=bg[0]*.299+bg[1]*.587+bg[2]*.114;
+    const inkBuckets=new Map<string,{count:number;rgb:[number,number,number]}>();
+    const x0=Math.max(0,Math.floor(x)),y0=Math.max(0,Math.floor(y));
+    const x1=Math.min(canvas.width,Math.ceil(x+w)),y1=Math.min(canvas.height,Math.ceil(y+h));
+    const stride=Math.max(1,Math.floor(Math.min(w,h)/18));
+    for(let py=y0;py<y1;py+=stride) for(let px=x0;px<x1;px+=stride) {
+      const d=ctx.getImageData(px,py,1,1).data;
+      const lum=d[0]*.299+d[1]*.587+d[2]*.114;
+      if(Math.abs(lum-bgL)<35) continue;
+      const rgbValue:[number,number,number]=[d[0],d[1],d[2]];
+      const key=rgbValue.map(v=>Math.round(v/16)).join(',');
+      const old=inkBuckets.get(key)||{count:0,rgb:rgbValue};
+      old.count++;inkBuckets.set(key,old);
+    }
+    const inkEntry=[...inkBuckets.values()].sort((a,b)=>b.count-a.count)[0];
+    const toHex=(c:number[])=>'#'+c.map(v=>Math.round(v).toString(16).padStart(2,'0')).join('');
+    return {maskColor:toHex(bg),color:inkEntry?toHex(inkEntry.rgb):'#222222'};
+  }
+
   function editExistingText(hit: PdfTextHit) {
     const existing = annotations.find(item => item.sourceHitId === hit.id);
     if (existing) {
@@ -688,41 +755,13 @@ export default function App() {
     const boxY = Math.max(0, hit.y - padY);
     const boxW = Math.min(1 - boxX, Math.max(.012, hit.w + padX * 2));
     const boxH = Math.min(1 - boxY, Math.max(.012, hit.h + padY * 2));
-    // Sample nearby page pixels so replacement masks match white or tinted cells.
-    let maskColor = '#ffffff';
-    const canvas = canvasRef.current;
-    if (canvas && canvas.width && canvas.height) {
-      const ctx = canvas.getContext('2d');
-      if (ctx) {
-        const px = hit.x * canvas.width, py = hit.y * canvas.height;
-        const pw = hit.w * canvas.width, ph = hit.h * canvas.height;
-        // Sample a narrow band around the source text, as in the supplied standalone HTML.
-        // Use the most frequent quantized colour instead of simply choosing the brightest
-        // pixel; this preserves grey, tinted and dark table-cell backgrounds.
-        const counts = new Map<string, { count:number; rgb:[number,number,number] }>();
-        const edgePoints = [
-          ...Array.from({length:9},(_,i)=>[px + pw*i/8, py - 2] as [number,number]),
-          ...Array.from({length:9},(_,i)=>[px + pw*i/8, py + ph + 2] as [number,number]),
-          ...Array.from({length:5},(_,i)=>[px - 2, py + ph*i/4] as [number,number]),
-          ...Array.from({length:5},(_,i)=>[px + pw + 2, py + ph*i/4] as [number,number])
-        ];
-        for (const [sx,sy] of edgePoints) {
-          const x = Math.max(0, Math.min(canvas.width - 1, Math.round(sx)));
-          const y = Math.max(0, Math.min(canvas.height - 1, Math.round(sy)));
-          const pixel = ctx.getImageData(x,y,1,1).data;
-          const color:[number,number,number] = [pixel[0],pixel[1],pixel[2]];
-          const key = color.map(v=>Math.round(v/12)).join(',');
-          const item = counts.get(key) || {count:0,rgb:color};
-          item.count++; counts.set(key,item);
-        }
-        const dominant = [...counts.values()].sort((a,b)=>b.count-a.count)[0];
-        if (dominant) maskColor = '#' + dominant.rgb.map(v=>v.toString(16).padStart(2,'0')).join('');
-      }
-    }
+    // Estimate the cell/page background and original glyph colour from rendered pixels.
+    const appearance = sampleTextAppearance(hit);
+    const maskColor = appearance.maskColor;
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
-      color: '#222222', styleId: 'body', align: 'left', coverOriginal: true, sourceHitId: hit.id
+      color: appearance.color, styleId: 'body', align: 'left', coverOriginal: true, sourceHitId: hit.id
     };
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
@@ -848,8 +887,13 @@ export default function App() {
       if (a.coverOriginal && typeof patch.text === 'string') {
         const pageWidth = canvasRef.current?.clientWidth || pageSizeRef.current.width || 1;
         const fontPx = Math.max(6, a.size * fitZoom * zoom / 10000);
-        const longestLine = Math.max(...patch.text.split('\n').map(line => line.length), 1);
-        const estimatedWidth = (longestLine * fontPx * .58 + 6) / pageWidth;
+        const measureCanvas = window.document.createElement('canvas');
+        const measure = measureCanvas.getContext('2d');
+        const fontWeight = next.bold ? '700' : '400';
+        const fontStyle = next.italic ? 'italic' : 'normal';
+        if (measure) measure.font = fontStyle+' '+fontWeight+' '+fontPx+'px "'+next.font+'"';
+        const estimatedPixels = Math.max(...patch.text.split('\n').map(line => measure?.measureText(line || ' ').width || line.length*fontPx*.56), fontPx);
+        const estimatedWidth = (estimatedPixels + 8) / pageWidth;
         const lineCount = Math.max(1, patch.text.split('\n').length);
         const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / (canvasRef.current?.clientHeight || pageSizeRef.current.height || 1);
         next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
