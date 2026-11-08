@@ -274,7 +274,7 @@ export default function App() {
   const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
-  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'>('select');
+  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'>('edit');
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [comments, setComments] = useState<PdfComment[]>([]);
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
@@ -424,7 +424,7 @@ export default function App() {
         const content = await pdfPage.getTextContent();
         const hits: PdfTextHit[] = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim()).map((item:any,index:number) => {
           const transform = pdfjs.Util.transform(viewport.transform, item.transform);
-          const itemHeight = Math.max(5, (item.height || Math.hypot(transform[2], transform[3]) / viewport.scale) * viewport.scale);
+          const itemHeight = Math.max(3, (item.height || Math.hypot(item.transform[2], item.transform[3])) * viewport.scale);
           const itemWidth = Math.max(4, (item.width || item.str.length * itemHeight / viewport.scale * .45) * viewport.scale);
           return { id: page + '-' + index, page, text:item.str, x:Math.max(0,transform[4]/viewport.width), y:Math.max(0,(transform[5]-itemHeight)/viewport.height), w:Math.min(1,itemWidth/viewport.width), h:Math.min(1,itemHeight*1.12/viewport.height), fontSize:itemHeight/Math.max(.01,viewport.scale) };
         });
@@ -578,8 +578,8 @@ export default function App() {
       const entries:Array<{title:string;page:number}> = [];
       const visit = async (nodes:any[]) => { for (const node of nodes || []) { let target:any=node.dest; if (typeof target === 'string') target=await pdfView.getDestination(target); let targetPage=1; if (Array.isArray(target) && target[0]) { try { targetPage=(await pdfView.getPageIndex(target[0]))+1; } catch {} } entries.push({title:String(node.title||'Untitled bookmark'),page:targetPage}); if (node.items?.length) await visit(node.items); } };
       await visit(outline || []); setBookmarks(entries); setSearchResults([]); setTextHits([]);
-      setPage(1); setZoom(100); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); setOcrWords({}); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
-      setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages');
+      setPage(1); setZoom(100); setTool('edit'); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); setOcrWords({}); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null);
+      setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages. Edit Text is active: click any existing PDF text to change it.');
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
 
@@ -761,7 +761,7 @@ export default function App() {
       // string is not squeezed into the old PDF run's narrow width.
       if (a.coverOriginal && typeof patch.text === 'string') {
         const pageWidth = canvasRef.current?.clientWidth || pageSizeRef.current.width || 1;
-        const fontPx = Math.max(6, a.size * fitZoom * zoom / 10000);
+        const fontPx = Math.max(6, a.size * fitZoom * zoom / 100);
         const longestLine = Math.max(...patch.text.split('\n').map(line => line.length), 1);
         const estimatedWidth = (longestLine * fontPx * .58 + 6) / pageWidth;
         const lineCount = Math.max(1, patch.text.split('\n').length);
@@ -1075,8 +1075,8 @@ export default function App() {
           {document ? (continuousView && continuousUrl ? <iframe className="continuous-pdf-view" title="Continuous PDF pages" src={continuousUrl+'#toolbar=1&navpanes=0&view=FitH'} /> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
-            {tool==='edit' ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
-            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
+            {(tool==='edit'||tool==='select') ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
+            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/100)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
               <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)} />
               <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit' && e.button===0)beginMove(e,a)}} onPointerUp={e=>{if(tool==='edit')saveResizedBox(a.id,e.currentTarget)}} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
