@@ -32,7 +32,7 @@ class handler(BaseHTTPRequestHandler):
                     raise ValueError("Invalid page number.")
                 page = doc[page_no]
                 rect = edit.get("rect", {})
-                target = fitz.Rect(float(rect["x0"]), float(rect["y0"]), float(rect["x1"]), float(rect["y1"]))
+                page_rect = page.rect\n                target = fitz.Rect(float(rect["x0"])*page_rect.width, float(rect["y0"])*page_rect.height, float(rect["x1"])*page_rect.width, float(rect["y1"])*page_rect.height)
                 old_text = str(edit.get("originalText", "")).strip()
                 if not old_text or target.is_empty or not target.is_valid:
                     raise ValueError("Invalid original text selection.")
@@ -67,9 +67,9 @@ class handler(BaseHTTPRequestHandler):
                     color_int = int(edit.get("color", span.get("color", 0)))
                     color = ((color_int >> 16 & 255)/255, (color_int >> 8 & 255)/255, (color_int & 255)/255)
                     # Keep the source run's dimensions and use its baseline-aligned font size.
-                    box = fitz.Rect(rect.x0, rect.y0, max(rect.x1, rect.x0 + 4), rect.y1 + max(0, font_size*0.35))
+                    box_data = edit.get("box", {})\n                    box = fitz.Rect(float(box_data.get("x0", edit["rect"]["x0"]))*page.rect.width, float(box_data.get("y0", edit["rect"]["y0"]))*page.rect.height, float(box_data.get("x1", edit["rect"]["x1"]))*page.rect.width, float(box_data.get("y1", edit["rect"]["y1"]))*page.rect.height)\n                    box.x1 = max(box.x1, box.x0 + 4)\n                    box.y1 = max(box.y1, box.y0 + font_size*1.25)
                     font_name = "cour" if "mono" in span.get("font", "").lower() else ("tiro" if any(k in span.get("font", "").lower() for k in ("times","serif")) else "helv")
-                    page.insert_textbox(box, replacement, fontname=font_name, fontsize=font_size, color=color, overlay=True)
+                    inserted = page.insert_textbox(box, replacement, fontname=font_name, fontsize=font_size, color=color, overlay=True)\n                    if inserted < 0:\n                        raise ValueError("Replacement text does not fit the selected PDF text area. Increase the text box height or reduce the font size.")
             output = doc.tobytes(garbage=4, deflate=True)
             doc.close()
             self.send_response(200)
