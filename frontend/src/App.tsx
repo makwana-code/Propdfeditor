@@ -432,7 +432,57 @@ export default function App() {
           const right = Math.min(viewport.width, transform[4] + glyphWidth + 3);
           const bottom = Math.min(viewport.height, transform[5] + glyphHeight * .22 + 2);
           return { id: page + '-' + index, page, text:item.str, x:left/viewport.width, y:top/viewport.height, w:Math.max(.004,(right-left)/viewport.width), h:Math.max(.012,(bottom-top)/viewport.height), fontSize:glyphHeight/Math.max(.01,viewport.scale) };
-        });        if (!cancelled) setTextHits(hits);
+        });
+        if (!cancelled && hits.length) {
+          setTextHits(hits);
+        } else if (!cancelled) {
+          // Image-only/scanned page: automatically OCR it so Edit Text can target recognized words.
+          const cachedWords = ocrWords[page];
+          if (cachedWords?.length) {
+            setTextHits(cachedWords.map((word, index) => ({
+              id: 'ocr-' + page + '-' + index, page, text: word.text,
+              x: word.x, y: word.y, w: word.w, h: word.h,
+              fontSize: Math.max(7, Math.min(24, word.h * viewport.height * 0.72 / Math.max(.01, viewport.scale)))
+            })));
+          } else {
+            setTextHits([]);
+            try {
+              setStatus('Scanned page detected. Preparing editable text with OCR…');
+              const { createWorker } = await import('tesseract.js');
+              const worker = await createWorker('eng');
+              const ocrViewport = pdfPage.getViewport({ scale: 2 });
+              const ocrCanvas = window.document.createElement('canvas');
+              ocrCanvas.width = Math.ceil(ocrViewport.width);
+              ocrCanvas.height = Math.ceil(ocrViewport.height);
+              const ocrContext = ocrCanvas.getContext('2d');
+              if (!ocrContext) throw new Error('OCR canvas unavailable.');
+              await pdfPage.render({ canvasContext: ocrContext, viewport: ocrViewport }).promise;
+              const result: any = await worker.recognize(ocrCanvas);
+              await worker.terminate();
+              const words: OcrWord[] = (result.data.words || [])
+                .filter((word: any) => word.text?.trim() && word.confidence >= 35)
+                .map((word: any) => ({
+                  text: word.text.trim(),
+                  x: Math.max(0, Math.min(1, word.bbox.x0 / ocrViewport.width)),
+                  y: Math.max(0, Math.min(1, word.bbox.y0 / ocrViewport.height)),
+                  w: Math.max(.004, Math.min(1, (word.bbox.x1 - word.bbox.x0) / ocrViewport.width)),
+                  h: Math.max(.008, Math.min(1, (word.bbox.y1 - word.bbox.y0) / ocrViewport.height))
+                }));
+              if (!cancelled) {
+                setOcrWords(old => ({ ...old, [page]: words }));
+                setOcrPages(old => ({ ...old, [page]: result.data.text || '' }));
+                setTextHits(words.map((word, index) => ({
+                  id: 'ocr-' + page + '-' + index, page, text: word.text,
+                  x: word.x, y: word.y, w: word.w, h: word.h, fontSize: 10
+                })));
+                setStatus('OCR ready. Click any recognized word to edit it.');
+              }
+              ocrCanvas.width = 0; ocrCanvas.height = 0;
+            } catch (ocrError) {
+              if (!cancelled) setStatus('OCR could not process this page: ' + (ocrError instanceof Error ? ocrError.message : 'unknown error'));
+            }
+          }
+        }
       } catch (error) {
         setStatus(error instanceof Error ? error.message : 'Unable to render PDF page.');
       }
