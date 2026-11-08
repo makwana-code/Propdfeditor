@@ -258,7 +258,7 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string };
+type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; color?: string };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number };
@@ -347,8 +347,7 @@ export default function App() {
   async function openFromCloud() {
     if (!supabase || !cloudUser) { await signInOrUp(); return; }
     setBusy(true);
-    try { const {data,error}=await supabase.from('saved_documents').select('file_name,storage_path,editor_state,created_at').order('created_at',{ascending:false}).limit(30); if(error) throw error; if(!data?.length) { setStatus('No cloud documents found.'); return; } const promptText='Choose document number:\n'+data.map((item,index)=>(index+1)+'. '+item.file_name+' — '+new Date(item.created_at).toLocaleString()).join('\n'); const choice=window.prompt(promptText,'1'); if(choice===null) return; const record=data[Number(choice)-1]; if(!record) throw new Error('Invalid document number.'); const downloaded=await supabase.storage.from('pdf-documents').download(record.storage_path); if(downloaded.error) throw downloaded.error; await openPdf(new File([downloaded.data],record.file_name,{type:'application/pdf'})); const state=record.editor_state as any; setAnnotations(state.annotations||[]); setComments(state.comments||[]); setStrokes(state.strokes||[]); setOcrPages(state.ocrPages||{}); setOcrWords(state.ocrWords||{}); if(state.page) setPage(state.page); if(state.zoom) setZoom(state.zoom); setStatus('Loaded '+record.file_name+' from your private cloud.'); }
-    catch(error) { setStatus(error instanceof Error ? 'Cloud open failed: '+error.message : 'Cloud open failed.'); } finally { setBusy(false); }
+    try { const {data,error}=await supabase.from('saved_documents').select('file_name,storage_path,editor_state,created_at').order('created_at',{ascending:false}).limit(30); if(error) throw error; if(!data?.length) { setStatus('No cloud documents found.'); return; } const promptText='Choose document number:\n'+data.map((item,index)=>(index+1)+'. '+item.file_name+' — '+new Date(item.created_at).toLocaleString()).join('\n'); const choice=window.prompt(promptText,'1'); if(choice===null) return; const record=data[Number(choice)-1]; if(!record) throw new Error('Invalid document number.'); const downloaded=await supabase.storage.from('pdf-documents').download(record.storage_path); if(downloaded.error) throw downloaded.error; await openPdf(new File([downloaded.data],record.file_name,{type:'application/pdf'})); const state=record.editor_state as any; setAnnotations(state.annotations||[]); setComments(state.comments||[]); setStrokes(state.strokes||[]); setOcrPages(state.ocrPages||{}); setOcrWords(state.ocrWords||{}); if(state.page) setPage(state.page); if(state.zoom) setZoom(state.zoom); setStatus('Loaded '+record.file_name+' from your private cloud.'); }    catch(error) { setStatus(error instanceof Error ? 'Cloud open failed: '+error.message : 'Cloud open failed.'); } finally { setBusy(false); }
   }
   async function signOutCloud() { if(!supabase) return; const {error}=await supabase.auth.signOut(); setStatus(error ? error.message : 'Signed out of ProPDF Cloud.'); }
   const canUndo = undoRef.current.length > 0;
@@ -697,8 +696,7 @@ export default function App() {
     if (!ctx) return { maskColor:'#ffffff', color:'#222222' };
     const x = hit.x * canvas.width, y = hit.y * canvas.height;
     const w = Math.max(2, hit.w * canvas.width), h = Math.max(2, hit.h * canvas.height);
-    const margin = Math.max(2, Math.round((window.devicePixelRatio || 1) * 2));
-    const buckets = new Map<string,{count:number;rgb:[number,number,number]}>();
+    const margin = Math.max(2, Math.round((window.devicePixelRatio || 1) * 2));    const buckets = new Map<string,{count:number;rgb:[number,number,number]}>();
     const add = (data:Uint8ClampedArray) => {
       const rgbValue:[number,number,number] = [data[0],data[1],data[2]];
       const key = rgbValue.map(v=>Math.round(v/12)).join(',');
@@ -759,7 +757,7 @@ export default function App() {
     const appearance = sampleTextAppearance(hit);
     const maskColor = appearance.maskColor;
     const annotation: TextAnnotation = {
-      id, page: hit.page, text: hit.text, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
+      id, page: hit.page, text: hit.text, originalText: hit.text, sourceRect: { x0: hit.x, y0: hit.y, x1: hit.x + hit.w, y1: hit.y + hit.h }, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
       color: appearance.color, styleId: 'body', align: 'left', coverOriginal: true, sourceHitId: hit.id
     };
@@ -944,10 +942,37 @@ export default function App() {
     if (!document) return;
     setBusy(true);
     try {
-      const pdf = await PDFDocument.load(document.bytes.slice(0));
+      let sourceBytes = document.bytes.slice(0);
+      const originalEdits = annotations.filter(item => item.coverOriginal && item.sourceRect && item.originalText);
+      if (originalEdits.length) {
+        setStatus('Replacing original PDF text content…');
+        const form = new FormData();
+        form.append('file', new Blob([sourceBytes], { type: 'application/pdf' }), document.file.name);
+        form.append('edits', JSON.stringify(originalEdits.map(item => ({
+          page: item.page,
+          originalText: item.originalText,
+          text: item.text,
+          rect: item.sourceRect,
+          box: { x0: item.x, y0: item.y, x1: item.x + item.w, y1: item.y + item.h },
+          size: item.size,
+          color: parseInt(item.color.replace('#',''), 16),
+          font: item.font,
+          bold: !!item.bold,
+          italic: !!item.italic
+        }))));
+        const response = await fetch('/api/edit-original-text', { method: 'POST', body: form });
+        if (!response.ok) {
+          const failure = await response.json().catch(() => ({ error: 'Native PDF text editing failed.' }));
+          throw new Error(failure.error || 'Native PDF text editing failed.');
+        }
+        sourceBytes = await response.arrayBuffer();
+      }
+      const pdf = await PDFDocument.load(sourceBytes);
       pdf.registerFontkit(fontkit);
       const embeddedFonts = new Map<string, Awaited<ReturnType<typeof pdf.embedFont>>>();
       for (const annotation of annotations) {
+        // Original text has already been removed and reinserted by the native PDF engine.
+        if (annotation.coverOriginal) continue;
         const target = pdf.getPage(annotation.page - 1);
         const { width, height } = target.getSize();
         const fontKey = annotation.font + ':' + (annotation.bold ? 'b' : '') + (annotation.italic ? 'i' : '');
@@ -1047,8 +1072,7 @@ export default function App() {
         const cardY = Math.max(4, Math.min(height - cardHeight - 4, height - requestedTop - cardHeight));
         const connectorEnd = { x: cardX, y: cardY + cardHeight / 2 };
         const commentColor = rgb(0.82, 0.54, 0.15);
-        target.drawLine({ start: anchor, end: connectorEnd, thickness: 1.4, color: commentColor });
-        target.drawCircle({ x: anchor.x, y: anchor.y, size: 4, color: commentColor });
+        target.drawLine({ start: anchor, end: connectorEnd, thickness: 1.4, color: commentColor });        target.drawCircle({ x: anchor.x, y: anchor.y, size: 4, color: commentColor });
         target.drawRectangle({
           x: cardX, y: cardY, width: cardWidth, height: cardHeight,
           color: rgb(1, 0.98, 0.93), borderColor: rgb(0.93, 0.81, 0.62), borderWidth: 0.8
@@ -1065,7 +1089,7 @@ export default function App() {
       anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
       anchor.click();
       URL.revokeObjectURL(url);
-      setStatus('Export complete. Text annotations have been added to the PDF.');
+      setStatus(originalEdits.length ? 'Export complete. Original PDF text was redacted and replaced in the PDF content.' : 'Export complete.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
     } finally { setBusy(false); }
