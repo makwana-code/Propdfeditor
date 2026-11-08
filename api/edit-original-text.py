@@ -30,7 +30,7 @@ class handler(BaseHTTPRequestHandler):
             for part in message.iter_parts():
                 name = part.get_param("name", header="content-disposition")
                 payload = part.get_payload(decode=True) or b""
-                if name == "file" or part.get_filename():
+                if name == "file":
                     pdf_bytes = payload
                 elif name == "edits":
                     edits = json.loads(payload.decode("utf-8"))
