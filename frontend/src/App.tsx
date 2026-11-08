@@ -600,6 +600,15 @@ export default function App() {
     if ((event.target as HTMLElement).closest('.pdf-annotation, .comment-pin, .comment-note, button, textarea, input')) return;
     const point = normalizedPoint(event);
     if (!point) return;
+    // Page-level fallback: transparent hit buttons can be difficult to tap on dense tables.
+    if (tool === 'edit') {
+      const hit = textHits.filter(item => item.page === page).map(item => {
+        const dx = point.x < item.x ? item.x - point.x : point.x > item.x + item.w ? point.x - (item.x + item.w) : 0;
+        const dy = point.y < item.y ? item.y - point.y : point.y > item.y + item.h ? point.y - (item.y + item.h) : 0;
+        return { item, distance: Math.hypot(dx, dy) };
+      }).filter(entry => entry.distance <= .012).sort((a,b) => a.distance - b.distance)[0]?.item;
+      if (hit) { editExistingText(hit); return; }
+    }
     if (tool === 'text') {
       const id = crypto.randomUUID();
       setAnnotations(old => [...old, { id, page, text: 'Type here', x: point.x, y: point.y, w: .34, h: .12, font, size: fontSize, color: fontColor, styleId: activeStyle.id, bold: activeStyle.bold, italic: activeStyle.italic, underline: activeStyle.underline, align: activeStyle.align }]);
