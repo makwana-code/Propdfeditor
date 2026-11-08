@@ -422,13 +422,17 @@ export default function App() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         await pdfPage.render({ canvasContext: ctx, viewport }).promise;
         const content = await pdfPage.getTextContent();
-        const hits: PdfTextHit[] = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim()).map((item:any,index:number) => {
+        const hits: PdfTextHit[] = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform)).map((item:any,index:number) => {
+          // Convert PDF.js baseline coordinates into a generous, touch-friendly page hitbox.
           const transform = pdfjs.Util.transform(viewport.transform, item.transform);
-          const itemHeight = Math.max(3, (item.height || Math.hypot(item.transform[2], item.transform[3])) * viewport.scale);
-          const itemWidth = Math.max(4, (item.width || item.str.length * itemHeight / viewport.scale * .45) * viewport.scale);
-          return { id: page + '-' + index, page, text:item.str, x:Math.max(0,transform[4]/viewport.width), y:Math.max(0,(transform[5]-itemHeight)/viewport.height), w:Math.min(1,itemWidth/viewport.width), h:Math.min(1,itemHeight*1.12/viewport.height), fontSize:itemHeight/Math.max(.01,viewport.scale) };
-        });
-        if (!cancelled) setTextHits(hits);
+          const glyphHeight = Math.max(3, Math.hypot(transform[2], transform[3]));
+          const glyphWidth = Math.max(4, (Number(item.width) || item.str.length * glyphHeight * .45) * viewport.scale);
+          const left = Math.max(0, transform[4] - 2);
+          const top = Math.max(0, transform[5] - glyphHeight * 1.22 - 2);
+          const right = Math.min(viewport.width, transform[4] + glyphWidth + 3);
+          const bottom = Math.min(viewport.height, transform[5] + glyphHeight * .22 + 2);
+          return { id: page + '-' + index, page, text:item.str, x:left/viewport.width, y:top/viewport.height, w:Math.max(.004,(right-left)/viewport.width), h:Math.max(.012,(bottom-top)/viewport.height), fontSize:glyphHeight/Math.max(.01,viewport.scale) };
+        });        if (!cancelled) setTextHits(hits);
       } catch (error) {
         setStatus(error instanceof Error ? error.message : 'Unable to render PDF page.');
       }
