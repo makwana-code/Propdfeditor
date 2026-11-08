@@ -113,25 +113,25 @@ class handler(BaseHTTPRequestHandler):
                         float(box_data.get("y1", edit["rect"]["y1"])) * page_rect.height,
                     )
                     box.x1 = max(box.x1, box.x0 + 4)
-                    box.y1 = max(box.y1, box.y0 + font_size * 1.4)
 
+                    # Insert on a baseline rather than in a tight textbox. PDF.js
+                    # hit boxes are often only the glyph height; insert_textbox
+                    # can reject a perfectly valid one-line replacement there.
                     source_font = span.get("font", "").lower()
                     font_name = "cour" if "mono" in source_font else (
                         "tiro" if any(term in source_font for term in ("times", "serif")) else "helv"
                     )
-                    inserted = page.insert_textbox(
-                        box,
+                    baseline_y = box.y0 + font_size
+                    inserted = page.insert_text(
+                        (box.x0, baseline_y),
                         replacement,
                         fontname=font_name,
                         fontsize=font_size,
                         color=color,
                         overlay=True,
                     )
-                    if inserted < 0:
-                        raise ValueError(
-                            "Replacement text does not fit the selected PDF text area. "
-                            "Increase the text box height or reduce the font size."
-                        )
+                    if inserted <= 0:
+                        raise ValueError("Replacement text could not be inserted into the PDF.")
 
             output = doc.tobytes(garbage=4, deflate=True)
             doc.close()
