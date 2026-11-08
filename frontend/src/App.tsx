@@ -696,14 +696,27 @@ export default function App() {
       if (ctx) {
         const px = hit.x * canvas.width, py = hit.y * canvas.height;
         const pw = hit.w * canvas.width, ph = hit.h * canvas.height;
-        const samples = [[px - 2, py + ph * .5], [px + pw + 2, py + ph * .5], [px + pw * .5, py - 2], [px + pw * .5, py + ph + 2]];
-        const colors = samples.map(([sx, sy]) => {
+        // Sample a narrow band around the source text, as in the supplied standalone HTML.
+        // Use the most frequent quantized colour instead of simply choosing the brightest
+        // pixel; this preserves grey, tinted and dark table-cell backgrounds.
+        const counts = new Map<string, { count:number; rgb:[number,number,number] }>();
+        const edgePoints = [
+          ...Array.from({length:9},(_,i)=>[px + pw*i/8, py - 2] as [number,number]),
+          ...Array.from({length:9},(_,i)=>[px + pw*i/8, py + ph + 2] as [number,number]),
+          ...Array.from({length:5},(_,i)=>[px - 2, py + ph*i/4] as [number,number]),
+          ...Array.from({length:5},(_,i)=>[px + pw + 2, py + ph*i/4] as [number,number])
+        ];
+        for (const [sx,sy] of edgePoints) {
           const x = Math.max(0, Math.min(canvas.width - 1, Math.round(sx)));
           const y = Math.max(0, Math.min(canvas.height - 1, Math.round(sy)));
-          const pixel = ctx.getImageData(x, y, 1, 1).data;
-          return { hex: '#' + [pixel[0], pixel[1], pixel[2]].map(v => v.toString(16).padStart(2, '0')).join(''), light: pixel[0] + pixel[1] + pixel[2] };
-        });
-        maskColor = colors.sort((a, b) => b.light - a.light)[0]?.hex || maskColor;
+          const pixel = ctx.getImageData(x,y,1,1).data;
+          const color:[number,number,number] = [pixel[0],pixel[1],pixel[2]];
+          const key = color.map(v=>Math.round(v/12)).join(',');
+          const item = counts.get(key) || {count:0,rgb:color};
+          item.count++; counts.set(key,item);
+        }
+        const dominant = [...counts.values()].sort((a,b)=>b.count-a.count)[0];
+        if (dominant) maskColor = '#' + dominant.rgb.map(v=>v.toString(16).padStart(2,'0')).join('');
       }
     }
     const annotation: TextAnnotation = {
@@ -776,6 +789,16 @@ export default function App() {
       }
       setOcrPages(old => ({ ...old, ...extracted }));
       setOcrWords(old => ({ ...old, ...positionedWords }));
+      // Make OCR words immediately clickable in Edit Text on the current scanned page.
+      // Do not replace embedded PDF text hitboxes on pages that already have selectable text.
+      if (!textHits.some(hit => hit.page === page) && positionedWords[page]?.length) {
+        const currentWords = positionedWords[page];
+        setTextHits(currentWords.map((word,index) => ({
+          id:'ocr-'+page+'-'+index, page, text:word.text, x:word.x, y:word.y,
+          w:word.w, h:word.h, fontSize:Math.max(7,Math.min(24,word.h*(pageSizeRef.current.height||700)*0.72/Math.max(0.01,fitZoom*zoom/100)))
+        })));
+        setStatus('OCR ready. Recognized words on this page are now clickable in Edit Text.');
+      }
       const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
