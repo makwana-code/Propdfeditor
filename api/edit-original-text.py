@@ -12,11 +12,11 @@ MAX_UPLOAD_BYTES = 4_000_000
 def clean_text(value):
     # PDF.js and PyMuPDF can expose the same glyph run with different
     # whitespace, soft-hyphen and ligature representations.
-    value = str(value or "").replace("\\u00ad", "")
-    value = value.replace("\\ufb00", "ff").replace("\\ufb01", "fi")
-    value = value.replace("\\ufb02", "fl").replace("\\ufb03", "ffi")
-    value = value.replace("\\ufb04", "ffl")
-    return re.sub(r"\\s+", " ", value).strip()
+    value = str(value or "").replace("\u00ad", "")
+    value = value.replace("\ufb00", "ff").replace("\ufb01", "fi")
+    value = value.replace("\ufb02", "fl").replace("\ufb03", "ffi")
+    value = value.replace("\ufb04", "ffl")
+    return re.sub(r"\s+", " ", value).strip()
 
 
 def rect_distance(a, b):
