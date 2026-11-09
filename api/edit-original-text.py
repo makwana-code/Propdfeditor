@@ -2,10 +2,86 @@ from http.server import BaseHTTPRequestHandler
 from email.parser import BytesParser
 from email.policy import default
 import json
+import re
 import fitz
 
 
 MAX_UPLOAD_BYTES = 4_000_000
+
+
+def clean_text(value):
+    # PDF.js and PyMuPDF can expose the same glyph run with different
+    # whitespace, soft-hyphen and ligature representations.
+    value = str(value or "").replace("\\u00ad", "")
+    value = value.replace("\\ufb00", "ff").replace("\\ufb01", "fi")
+    value = value.replace("\\ufb02", "fl").replace("\\ufb03", "ffi")
+    value = value.replace("\\ufb04", "ffl")
+    return re.sub(r"\\s+", " ", value).strip()
+
+
+def rect_distance(a, b):
+    return abs(a.x0 - b.x0) + abs(a.y0 - b.y0)
+
+
+def resolve_original_text(page, old_text, target):
+    """Resolve a PDF.js hit against native PDF text, even across span splits."""
+    wanted = clean_text(old_text)
+    if not wanted:
+        raise ValueError("Selected text is empty.")
+
+    # Native text search works across many PyMuPDF span boundaries.
+    try:
+        matches = page.search_for(old_text, quads=False)
+    except Exception:
+        matches = []
+
+    # Fallback: compare the selected geometry against native spans. A PDF.js
+    # item can be one run while PyMuPDF reports several adjacent spans.
+    spans = []
+    for block in page.get_text("dict").get("blocks", []):
+        for line in block.get("lines", []):
+            line_spans = []
+            for span in line.get("spans", []):
+                text = clean_text(span.get("text", ""))
+                rect = fitz.Rect(span["bbox"])
+                if text and rect.intersects(target):
+                    line_spans.append((rect, span, text))
+            if line_spans:
+                spans.append(line_spans)
+
+    candidates = [(fitz.Rect(r), None) for r in matches if not fitz.Rect(r).is_empty]
+    for line_spans in spans:
+        line_spans.sort(key=lambda item: (round(item[0].y0, 1), item[0].x0))
+        combined = ""
+        selected = []
+        for rect, span, text in line_spans:
+            combined = (combined + " " + text).strip()
+            selected.append((rect, span))
+            if clean_text(combined) == wanted:
+                union = fitz.Rect(selected[0][0])
+                for item_rect, _ in selected[1:]:
+                    union |= item_rect
+                candidates.append((union, selected[0][1]))
+                break
+            # Do not let a long unrelated line grow without bound.
+            if len(clean_text(combined)) > len(wanted) + 24:
+                break
+
+    if not candidates:
+        raise ValueError(
+            "Could not locate the selected text in the PDF's native text layer. "
+            "This page may be scanned, outlined, or have a different text encoding."
+        )
+
+    candidates.sort(key=lambda item: rect_distance(item[0], target))
+    chosen, span = candidates[0]
+    if len(candidates) > 1 and rect_distance(candidates[1][0], target) + 1 < rect_distance(chosen, target):
+        # The nearest geometric match wins; do not reject merely because the
+        # same phrase occurs elsewhere in the document.
+        pass
+    if not chosen.intersects(target) and rect_distance(chosen, target) > max(24, target.width * 0.35):
+        raise ValueError("Could not confidently match the selected text position. No changes were applied.")
+    return chosen, span
 
 
 class handler(BaseHTTPRequestHandler):
@@ -14,7 +90,7 @@ class handler(BaseHTTPRequestHandler):
         try:
             length = int(self.headers.get("content-length", "0"))
             if length <= 0 or length > MAX_UPLOAD_BYTES:
-                return self._json(413, {"error": "PDF must be smaller than 4 MB for this editor endpoint."})
+                return self._json(413, {"error": "PDF upload is too large for this editor endpoint (maximum 4 MB)."})
 
             content_type = self.headers.get("content-type", "")
             if "multipart/form-data" not in content_type.lower():
@@ -22,7 +98,7 @@ class handler(BaseHTTPRequestHandler):
 
             raw = self.rfile.read(length)
             message = BytesParser(policy=default).parsebytes(
-                b"Content-Type: " + content_type.encode("ascii") + b"\r\nMIME-Version: 1.0\r\n\r\n" + raw
+                b"Content-Type: " + content_type.encode("ascii") + b"\\r\\nMIME-Version: 1.0\\r\\n\\r\\n" + raw
             )
 
             pdf_bytes = None
@@ -35,13 +111,16 @@ class handler(BaseHTTPRequestHandler):
                 elif name == "edits":
                     edits = json.loads(payload.decode("utf-8"))
 
-            if not pdf_bytes or not isinstance(edits, list) or not edits:
-                return self._json(400, {"error": "Missing PDF or original-text edits."})
+            if not pdf_bytes or not pdf_bytes.startswith(b"%PDF"):
+                return self._json(400, {"error": "The uploaded file is not a valid PDF."})
+            if not isinstance(edits, list) or not edits:
+                return self._json(400, {"error": "No original-text edits were supplied."})
 
             doc = fitz.open(stream=pdf_bytes, filetype="pdf")
             resolved = []
 
-            # Resolve all selections before applying any redactions.
+            # Resolve every selection before applying any redaction, so one
+            # bad selection cannot leave a partially modified document.
             for edit in edits:
                 page_no = int(edit["page"]) - 1
                 if page_no < 0 or page_no >= len(doc):
@@ -50,35 +129,22 @@ class handler(BaseHTTPRequestHandler):
                 page = doc[page_no]
                 rect_data = edit.get("rect") or {}
                 page_rect = page.rect
-                target = fitz.Rect(
+                visible_rect = fitz.Rect(
                     float(rect_data["x0"]) * page_rect.width,
                     float(rect_data["y0"]) * page_rect.height,
                     float(rect_data["x1"]) * page_rect.width,
                     float(rect_data["y1"]) * page_rect.height,
                 )
-                old_text = str(edit.get("originalText", "")).strip()
-                if not old_text or target.is_empty or not target.is_valid:
-                    raise ValueError("Invalid original text selection.")
+                # PDF.js reports coordinates in the displayed (rotated)
+                # viewport; PyMuPDF text coordinates are unrotated.
+                target = visible_rect * page.derotation_matrix if page.rotation else visible_rect
+                target &= page.cropbox
+                if target.is_empty or not target.is_valid:
+                    raise ValueError("Selected text coordinates are outside the PDF page.")
 
-                candidates = []
-                for block in page.get_text("dict").get("blocks", []):
-                    for line in block.get("lines", []):
-                        for span in line.get("spans", []):
-                            span_text = span.get("text", "").strip()
-                            span_rect = fitz.Rect(span["bbox"])
-                            if span_text == old_text:
-                                candidates.append((span_rect, span))
-                if not candidates:
-                    raise ValueError("Original PDF text could not be matched exactly: " + old_text[:80])
-
-                chosen_rect, span = min(
-                    candidates,
-                    key=lambda item: abs(item[0].x0 - target.x0) + abs(item[0].y0 - target.y0),
-                )
-                distance = abs(chosen_rect.x0 - target.x0) + abs(chosen_rect.y0 - target.y0)
-                if not chosen_rect.intersects(target) and distance > 18:
-                    raise ValueError("Text match was ambiguous; no changes were applied.")
-                resolved.append((page_no, chosen_rect, span, edit))
+                old_text = str(edit.get("originalText", ""))
+                source_rect, span = resolve_original_text(page, old_text, target)
+                resolved.append((page_no, source_rect, span, edit))
 
             by_page = {}
             for entry in resolved:
@@ -88,7 +154,6 @@ class handler(BaseHTTPRequestHandler):
                 page = doc[page_no]
                 for _, source_rect, _, _ in entries:
                     page.add_redact_annot(source_rect, fill=(1, 1, 1), cross_out=False)
-
                 page.apply_redactions(images=0, graphics=0, text=0)
 
                 for _, source_rect, span, edit in entries:
@@ -96,8 +161,8 @@ class handler(BaseHTTPRequestHandler):
                     if not replacement:
                         continue
 
-                    font_size = float(edit.get("size") or span.get("size", 10))
-                    color_int = int(edit.get("color", span.get("color", 0)))
+                    font_size = float(edit.get("size") or (span or {}).get("size", 10))
+                    color_int = int(edit.get("color", (span or {}).get("color", 0)))
                     color = (
                         ((color_int >> 16) & 255) / 255,
                         ((color_int >> 8) & 255) / 255,
@@ -106,32 +171,30 @@ class handler(BaseHTTPRequestHandler):
 
                     box_data = edit.get("box") or {}
                     page_rect = page.rect
-                    box = fitz.Rect(
+                    display_box = fitz.Rect(
                         float(box_data.get("x0", edit["rect"]["x0"])) * page_rect.width,
                         float(box_data.get("y0", edit["rect"]["y0"])) * page_rect.height,
                         float(box_data.get("x1", edit["rect"]["x1"])) * page_rect.width,
                         float(box_data.get("y1", edit["rect"]["y1"])) * page_rect.height,
                     )
+                    box = display_box * page.derotation_matrix if page.rotation else display_box
+                    box &= page.cropbox
+                    if box.is_empty:
+                        box = source_rect
                     box.x1 = max(box.x1, box.x0 + 4)
 
-                    # Insert on a baseline rather than in a tight textbox. PDF.js
-                    # hit boxes are often only the glyph height; insert_textbox
-                    # can reject a perfectly valid one-line replacement there.
-                    source_font = span.get("font", "").lower()
+                    source_font = ((span or {}).get("font", "")).lower()
                     font_name = "cour" if "mono" in source_font else (
                         "tiro" if any(term in source_font for term in ("times", "serif")) else "helv"
                     )
                     baseline_y = box.y0 + font_size
                     inserted = page.insert_text(
-                        (box.x0, baseline_y),
-                        replacement,
-                        fontname=font_name,
-                        fontsize=font_size,
-                        color=color,
-                        overlay=True,
+                        (box.x0, baseline_y), replacement,
+                        fontname=font_name, fontsize=font_size,
+                        color=color, overlay=True,
                     )
                     if inserted <= 0:
-                        raise ValueError("Replacement text could not be inserted into the PDF.")
+                        raise ValueError("The original text was removed but the replacement could not be inserted.")
 
             output = doc.tobytes(garbage=4, deflate=True)
             doc.close()
