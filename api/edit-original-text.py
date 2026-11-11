@@ -98,7 +98,7 @@ class handler(BaseHTTPRequestHandler):
 
             raw = self.rfile.read(length)
             message = BytesParser(policy=default).parsebytes(
-                b"Content-Type: " + content_type.encode("ascii") + b"\\r\\nMIME-Version: 1.0\\r\\n\\r\\n" + raw
+                b"Content-Type: " + content_type.encode("ascii") + b"\r\nMIME-Version: 1.0\r\n\r\n" + raw
             )
 
             pdf_bytes = None
