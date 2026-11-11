@@ -154,7 +154,7 @@ class handler(BaseHTTPRequestHandler):
                 page = doc[page_no]
                 for _, source_rect, _, _ in entries:
                     page.add_redact_annot(source_rect, fill=(1, 1, 1), cross_out=False)
-                page.apply_redactions(images=0, graphics=0, text=0)
+                page.apply_redactions(images=0, graphics=0, text=1)
 
                 for _, source_rect, span, edit in entries:
                     replacement = str(edit.get("text", ""))
