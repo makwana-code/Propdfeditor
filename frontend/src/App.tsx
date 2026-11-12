@@ -1218,10 +1218,15 @@ export default function App() {
     if (!document || busy || toPage < 1 || toPage > document.pages || fromPage === toPage) return;
     setBusy(true);
     try {
-      const pdf = await PDFDocument.load(document.bytes.slice(0));
-      pdf.movePage(fromPage - 1, toPage - 1);
-      const bytes = await pdf.save({ useObjectStreams: false });
-      const updated = new File([bytes], document.file.name, {type:'application/pdf'});
+      const source = await PDFDocument.load(document.bytes.slice(0));
+      const order = source.getPageIndices();
+      const [moved] = order.splice(fromPage - 1, 1);
+      order.splice(toPage - 1, 0, moved);
+      const reordered = await PDFDocument.create();
+      const pages = await reordered.copyPages(source, order);
+      pages.forEach(item => reordered.addPage(item));
+      const bytes = await reordered.save({ useObjectStreams: false });
+      const updated = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], document.file.name, {type:'application/pdf'});
       await openPdf(updated);
       setPage(toPage);
       setStatus('Page ' + fromPage + ' moved to position ' + toPage + '.');
