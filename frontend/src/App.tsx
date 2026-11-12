@@ -1205,7 +1205,7 @@ export default function App() {
         setStatus('Merged document ' + (index + 1) + ' of ' + sources.length + '…');
       }
       const bytes = await merged.save({ useObjectStreams: false });
-      const mergedFile = new File([bytes], 'merged-' + document.file.name.replace(/\\.pdf$/i,'') + '.pdf', {type:'application/pdf'});
+      const mergedFile = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], 'merged-' + document.file.name.replace(/\\.pdf$/i,'') + '.pdf', {type:'application/pdf'});
       setMergeFiles([]);
       await openPdf(mergedFile);
       setStatus('Merged the original PDF and ' + (sources.length - 1) + ' added PDF(s) into ' + totalPages + ' pages. Arrange pages in the Pages panel, then edit and save.');
