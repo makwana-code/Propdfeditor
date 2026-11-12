@@ -203,3 +203,10 @@
 /* Make all resize handles available on inline original-text replacements. */
 .pdf-annotation.source-text-edit .resize-handle{display:block!important;opacity:0}
 .pdf-annotation.source-text-edit.selected .resize-handle{opacity:1}
+
+/* Page order controls in the thumbnails panel */
+.page-mini-wrap{display:flex;align-items:center;gap:3px;width:100%;}
+.page-mini-wrap .page-mini{flex:1;min-width:0;}
+.page-order-controls{display:flex;flex-direction:column;gap:2px;}
+.page-order-controls button{width:22px;height:22px;padding:0;border:1px solid #dce4ef;border-radius:5px;background:#fff;color:#536985;font-size:12px;line-height:1;cursor:pointer;}
+.page-order-controls button:disabled{opacity:.3;cursor:not-allowed;}
