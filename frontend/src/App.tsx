@@ -512,6 +512,11 @@ export default function App() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+        event.preventDefault();
+        if (document && !busy) void exportPdf(true);
+        return;
+      }
       if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId && !(event.target instanceof HTMLTextAreaElement)) {
         setAnnotations(old => old.filter(a => a.id !== selectedId));
         setSelectedId(null);
@@ -521,7 +526,7 @@ export default function App() {
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [selectedId]);
+  }, [selectedId, document, busy, annotations, comments, strokes, ocrWords]);
 
   useEffect(() => {
     function moveResize(event: PointerEvent) {
@@ -938,8 +943,22 @@ export default function App() {
     setStatus('Freehand stroke added.');
   }
 
-  async function exportPdf() {
+  async function exportPdf(saveToFile = false) {
     if (!document) return;
+    let saveHandle: any = null;
+    try {
+      const picker = (window as any).showSaveFilePicker;
+      if (saveToFile && typeof picker === 'function') {
+        saveHandle = await picker({
+          suggestedName: 'edited-' + document.file.name.replace(/\\.pdf$/i, '') + '.pdf',
+          types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
+        });
+      }
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setStatus(error instanceof Error ? error.message : 'Could not open Save dialog.');
+      return;
+    }
     setBusy(true);
     try {
       let sourceBytes = document.bytes.slice(0);
@@ -1083,13 +1102,21 @@ export default function App() {
         });
       }
       const bytes = await pdf.save();
-      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
-      const anchor = window.document.createElement('a');
-      anchor.href = url;
-      anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
-      anchor.click();
-      URL.revokeObjectURL(url);
-      setStatus(originalEdits.length ? 'Export complete. Original PDF text was redacted and replaced in the PDF content.' : 'Export complete.');
+      const outputBlob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' });
+      if (saveHandle) {
+        const writable = await saveHandle.createWritable();
+        await writable.write(outputBlob);
+        await writable.close();
+        setStatus('Saved PDF successfully to the selected location.');
+      } else {
+        const url = URL.createObjectURL(outputBlob);
+        const anchor = window.document.createElement('a');
+        anchor.href = url;
+        anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
+        anchor.click();
+        window.setTimeout(() => URL.revokeObjectURL(url), 1000);
+        setStatus(saveToFile ? 'Save dialog is not supported in this browser; the edited PDF was downloaded instead.' : (originalEdits.length ? 'Export complete. Original PDF text was redacted and replaced in the PDF content.' : 'Export complete.'));
+      }
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
     } finally { setBusy(false); }
@@ -1202,6 +1229,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
       <button className="toolbar-button" type="button" onClick={()=>setShowLeftPanel(v=>!v)}>{showLeftPanel?'Hide left panels':'Show left panels'}</button>
       <button className="toolbar-button" type="button" onClick={()=>setShowRightPanel(v=>!v)}>{showRightPanel?'Hide right panel':'Show right panel'}</button>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void exportPdf(true)}>💾 Save</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
       <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
       
