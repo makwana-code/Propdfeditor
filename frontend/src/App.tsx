@@ -1174,22 +1174,51 @@ export default function App() {
   }
 
   async function mergePdfs() {
-    if (mergeFiles.length < 2) { setStatus('Select at least two PDF files.'); return; }
+    if (mergeFiles.length < 2) { setStatus('Select at least two PDF files to merge.'); return; }
     setBusy(true);
+    setStatus('Checking PDF files and merging in the selected order…');
     try {
       const merged = await PDFDocument.create();
-      for (const file of mergeFiles) {
-        const source = await PDFDocument.load(await file.arrayBuffer());
-        const copied = await merged.copyPages(source, source.getPageIndices());
-        copied.forEach(p => merged.addPage(p));
+      let totalPages = 0;
+      for (let index = 0; index < mergeFiles.length; index++) {
+        const file = mergeFiles[index];
+        if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
+          throw new Error(file.name + ' is not a PDF file.');
+        }
+        const input = await file.arrayBuffer();
+        if (input.byteLength < 5 || new TextDecoder().decode(input.slice(0,5)) !== '%PDF-') {
+          throw new Error(file.name + ' is not a valid PDF or is damaged.');
+        }
+        let source;
+        try {
+          source = await PDFDocument.load(input, { ignoreEncryption: true, updateMetadata: false });
+        } catch (cause) {
+          throw new Error('Could not read "' + file.name + '". It may be password-protected, damaged, or use unsupported PDF features.');
+        }
+        const indices = source.getPageIndices();
+        if (!indices.length) throw new Error(file.name + ' contains no pages.');
+        const copied = await merged.copyPages(source, indices);
+        for (const pageCopy of copied) merged.addPage(pageCopy);
+        totalPages += copied.length;
+        setStatus('Merged file ' + (index + 1) + ' of ' + mergeFiles.length + '…');
       }
-      const bytes = await merged.save();
-      const url = URL.createObjectURL(new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' }));
-      const a = window.document.createElement('a'); a.href = url; a.download = 'merged.pdf'; a.click(); URL.revokeObjectURL(url);
+      if (!totalPages) throw new Error('No pages were found in the selected PDFs.');
+      const bytes = await merged.save({ useObjectStreams: false });
+      const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' });
+      const url = URL.createObjectURL(blob);
+      const a = window.document.createElement('a');
+      a.href = url;
+      a.download = 'merged.pdf';
+      a.style.display = 'none';
+      window.document.body.appendChild(a);
+      a.click();
+      a.remove();
+      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
       setMergeFiles([]);
-      setStatus('Merged ' + mergeFiles.length + ' PDFs successfully.');
-    } catch (error) { setStatus(error instanceof Error ? error.message : 'Merge failed.'); }
-    finally { setBusy(false); }
+      setStatus('Successfully merged ' + mergeFiles.length + ' PDFs (' + totalPages + ' pages) in the selected order. Download: merged.pdf');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Merge failed. Please check the selected PDFs.');
+    } finally { setBusy(false); }
   }
 
   return <main className="app-shell pdf-studio">
@@ -1222,7 +1251,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
-      <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{setMergeFiles(Array.from(event.target.files||[]));event.currentTarget.value='';}} /></label>
+      <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);setMergeFiles(old=>{const seen=new Set(old.map(file=>file.name+'|'+file.size+'|'+file.lastModified));return [...old,...incoming.filter(file=>{const key=file.name+'|'+file.size+'|'+file.lastModified;if(seen.has(key))return false;seen.add(key);return true;})];});event.currentTarget.value='';}} /></label>
       <button className="toolbar-button" disabled={mergeFiles.length<2||busy} onClick={()=>void mergePdfs()}>Merge ({mergeFiles.length})</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
