@@ -258,7 +258,7 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
+type TextAnnotation = { id: string; page: number; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; color?: string };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number };
@@ -274,7 +274,7 @@ export default function App() {
   const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
-  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'>('edit');
+  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'|'whiteout'>('edit');
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [comments, setComments] = useState<PdfComment[]>([]);
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
@@ -282,6 +282,8 @@ export default function App() {
   const [drawWidth, setDrawWidth] = useState(2.5);
   const drawingRef = useRef<DrawStroke | null>(null);
   const drawingBaseRef = useRef<EditorSnapshot | null>(null);
+  const whiteoutDragRef = useRef<{start:{x:number;y:number};current:{x:number;y:number}}|null>(null);
+  const [whiteoutDraft, setWhiteoutDraft] = useState<{x:number;y:number;w:number;h:number}|null>(null);
   const undoRef = useRef<EditorSnapshot[]>([]);
   const redoRef = useRef<EditorSnapshot[]>([]);
   const lastSnapshotRef = useRef<EditorSnapshot | null>(null);
@@ -919,6 +921,15 @@ export default function App() {
   }
 
   function beginDrawing(event: ReactPointerEvent<HTMLDivElement>) {
+    if (tool === 'whiteout') {
+      if ((event.target as HTMLElement).closest('.pdf-annotation,.comment-note')) return;
+      const point = normalizedPoint(event); if (!point) return;
+      event.preventDefault();
+      whiteoutDragRef.current = { start: point, current: point };
+      setWhiteoutDraft({x:point.x,y:point.y,w:0,h:0});
+      event.currentTarget.setPointerCapture(event.pointerId);
+      return;
+    }
     if (tool !== 'draw' || (event.target as HTMLElement).closest('.pdf-annotation,.comment-note')) return;
     const point = normalizedPoint(event); if (!point) return;
     event.preventDefault();
@@ -927,6 +938,13 @@ export default function App() {
     event.currentTarget.setPointerCapture(event.pointerId);
   }
   function continueDrawing(event: ReactPointerEvent<HTMLDivElement>) {
+    if (whiteoutDragRef.current) {
+      const point = normalizedPoint(event); if (!point) return;
+      const start = whiteoutDragRef.current.start;
+      whiteoutDragRef.current.current = point;
+      setWhiteoutDraft({x:Math.min(start.x,point.x),y:Math.min(start.y,point.y),w:Math.abs(point.x-start.x),h:Math.abs(point.y-start.y)});
+      return;
+    }
     if (!drawingRef.current) return;
     const point = normalizedPoint(event); if (!point) return;
     const active = drawingRef.current;
@@ -935,6 +953,18 @@ export default function App() {
     setStrokes(old => old.map(item => item.id === next.id ? next : item));
   }
   function finishDrawing() {
+    if (whiteoutDragRef.current) {
+      const drag = whiteoutDragRef.current; whiteoutDragRef.current = null;
+      const x=Math.min(drag.start.x,drag.current.x), y=Math.min(drag.start.y,drag.current.y);
+      const w=Math.abs(drag.current.x-drag.start.x), h=Math.abs(drag.current.y-drag.start.y);
+      setWhiteoutDraft(null);
+      if (w >= .004 && h >= .004) {
+        const id=crypto.randomUUID();
+        setAnnotations(old=>[...old,{id,page,kind:'whiteout',text:'',x,y,w,h,font:'Arial',size:12,color:'#ffffff'}]);
+        setSelectedId(id); setStatus('Whiteout area added. It will cover the selected region in the exported PDF.');
+      } else setStatus('Whiteout cancelled. Drag across an area to cover it.');
+      return;
+    }
     if (!drawingRef.current) return;
     const base = drawingBaseRef.current;
     if (base) { undoRef.current = [...undoRef.current.slice(-99), base]; redoRef.current = []; }
@@ -990,6 +1020,11 @@ export default function App() {
       pdf.registerFontkit(fontkit);
       const embeddedFonts = new Map<string, Awaited<ReturnType<typeof pdf.embedFont>>>();
       for (const annotation of annotations) {
+        if (annotation.kind === 'whiteout') {
+          const target = pdf.getPage(annotation.page - 1); const { width, height } = target.getSize();
+          target.drawRectangle({x:annotation.x*width,y:height-(annotation.y+annotation.h)*height,width:annotation.w*width,height:annotation.h*height,color:rgb(1,1,1),borderWidth:0});
+          continue;
+        }
         // Original text has already been removed and reinserted by the native PDF engine.
         if (annotation.coverOriginal) continue;
         const target = pdf.getPage(annotation.page - 1);
@@ -1247,6 +1282,7 @@ export default function App() {
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setCommentDraft('');setTool('comment');setStatus('Comment mode: click the exact position on the PDF page, then enter your note.');}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
+      <button className={tool==='whiteout'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('whiteout');setSelectedId(null);setStatus('Whiteout: drag over any area of the PDF to cover it with a white rectangle.')}}>▰ Whiteout</button>
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
@@ -1300,8 +1336,9 @@ export default function App() {
           {document ? (continuousView && continuousUrl ? <iframe className="continuous-pdf-view" title="Continuous PDF pages" src={continuousUrl+'#toolbar=1&navpanes=0&view=FitH'} /> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
+            {whiteoutDraft && tool==='whiteout' && <div className="pdf-whiteout-draft" style={{position:'absolute',left:(whiteoutDraft.x*100)+'%',top:(whiteoutDraft.y*100)+'%',width:(whiteoutDraft.w*100)+'%',height:(whiteoutDraft.h*100)+'%',background:'#fff',border:'1px dashed #2878d0',pointerEvents:'none',zIndex:20}}/>}
             {(tool==='edit'||tool==='select') ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
-            {annotations.filter(a=>a.page===page).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
+            {annotations.filter(a=>a.page===page).map(a=>a.kind==='whiteout' ? <div key={a.id} data-annotation-id={a.id} className={'pdf-annotation pdf-whiteout '+(selectedId===a.id?'selected':'')} title="Whiteout area" onClick={e=>{e.stopPropagation();setSelectedId(a.id)}} style={{position:'absolute',left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',background:'#fff',border:selectedId===a.id?'1px dashed #2878d0':'1px solid transparent',boxSizing:'border-box',zIndex:10,cursor:'pointer'}}/> : <div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}}>
               <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)} />
               <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit' && e.button===0)beginMove(e,a)}} onPointerUp={e=>{if(tool==='edit')saveResizedBox(a.id,e.currentTarget)}} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
               {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
