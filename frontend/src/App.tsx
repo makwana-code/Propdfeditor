@@ -1174,50 +1174,59 @@ export default function App() {
   }
 
   async function mergePdfs() {
-    if (mergeFiles.length < 2) { setStatus('Select at least two PDF files to merge.'); return; }
+    if (!document) { setStatus('Open the main PDF first, then add up to 10 PDFs to merge.'); return; }
+    if (!mergeFiles.length) { setStatus('Add at least one PDF to merge with the currently open document.'); return; }
+    if (mergeFiles.length > 10) { setStatus('You can add a maximum of 10 additional PDFs at a time.'); return; }
     setBusy(true);
-    setStatus('Checking PDF files and merging in the selected order…');
+    setStatus('Merging the open PDF first, followed by your added PDFs…');
     try {
       const merged = await PDFDocument.create();
+      const sources: Array<{name:string; bytes:ArrayBuffer}> = [
+        { name: document.file.name, bytes: document.bytes.slice(0) },
+        ...await Promise.all(mergeFiles.map(async file => ({ name:file.name, bytes:await file.arrayBuffer() })))
+      ];
       let totalPages = 0;
-      for (let index = 0; index < mergeFiles.length; index++) {
-        const file = mergeFiles[index];
-        if (!file.name.toLowerCase().endsWith('.pdf') && file.type !== 'application/pdf') {
-          throw new Error(file.name + ' is not a PDF file.');
-        }
-        const input = await file.arrayBuffer();
-        if (input.byteLength < 5 || new TextDecoder().decode(input.slice(0,5)) !== '%PDF-') {
+      for (let index = 0; index < sources.length; index++) {
+        const file = sources[index];
+        if (file.bytes.byteLength < 5 || new TextDecoder().decode(file.bytes.slice(0,5)) !== '%PDF-') {
           throw new Error(file.name + ' is not a valid PDF or is damaged.');
         }
         let source;
         try {
-          source = await PDFDocument.load(input, { ignoreEncryption: true, updateMetadata: false });
-        } catch (cause) {
+          source = await PDFDocument.load(file.bytes, { ignoreEncryption: true, updateMetadata: false });
+        } catch {
           throw new Error('Could not read "' + file.name + '". It may be password-protected, damaged, or use unsupported PDF features.');
         }
         const indices = source.getPageIndices();
         if (!indices.length) throw new Error(file.name + ' contains no pages.');
         const copied = await merged.copyPages(source, indices);
-        for (const pageCopy of copied) merged.addPage(pageCopy);
+        copied.forEach(pageCopy => merged.addPage(pageCopy));
         totalPages += copied.length;
-        setStatus('Merged file ' + (index + 1) + ' of ' + mergeFiles.length + '…');
+        setStatus('Merged document ' + (index + 1) + ' of ' + sources.length + '…');
       }
-      if (!totalPages) throw new Error('No pages were found in the selected PDFs.');
       const bytes = await merged.save({ useObjectStreams: false });
-      const blob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' });
-      const url = URL.createObjectURL(blob);
-      const a = window.document.createElement('a');
-      a.href = url;
-      a.download = 'merged.pdf';
-      a.style.display = 'none';
-      window.document.body.appendChild(a);
-      a.click();
-      a.remove();
-      window.setTimeout(() => URL.revokeObjectURL(url), 1500);
+      const mergedFile = new File([bytes], 'merged-' + document.file.name.replace(/\\.pdf$/i,'') + '.pdf', {type:'application/pdf'});
       setMergeFiles([]);
-      setStatus('Successfully merged ' + mergeFiles.length + ' PDFs (' + totalPages + ' pages) in the selected order. Download: merged.pdf');
+      await openPdf(mergedFile);
+      setStatus('Merged the original PDF and ' + (sources.length - 1) + ' added PDF(s) into ' + totalPages + ' pages. Arrange pages in the Pages panel, then edit and save.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Merge failed. Please check the selected PDFs.');
+    } finally { setBusy(false); }
+  }
+
+  async function movePageOrder(fromPage: number, toPage: number) {
+    if (!document || busy || toPage < 1 || toPage > document.pages || fromPage === toPage) return;
+    setBusy(true);
+    try {
+      const pdf = await PDFDocument.load(document.bytes.slice(0));
+      pdf.movePage(fromPage - 1, toPage - 1);
+      const bytes = await pdf.save({ useObjectStreams: false });
+      const updated = new File([bytes], document.file.name, {type:'application/pdf'});
+      await openPdf(updated);
+      setPage(toPage);
+      setStatus('Page ' + fromPage + ' moved to position ' + toPage + '.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not rearrange pages.');
     } finally { setBusy(false); }
   }
 
@@ -1251,8 +1260,8 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
       <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
-      <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);setMergeFiles(old=>{const seen=new Set(old.map(file=>file.name+'|'+file.size+'|'+file.lastModified));return [...old,...incoming.filter(file=>{const key=file.name+'|'+file.size+'|'+file.lastModified;if(seen.has(key))return false;seen.add(key);return true;})];});event.currentTarget.value='';}} /></label>
-      <button className="toolbar-button" disabled={mergeFiles.length<2||busy} onClick={()=>void mergePdfs()}>Merge ({mergeFiles.length})</button>
+      <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);setMergeFiles(old=>{const seen=new Set(old.map(file=>file.name+'|'+file.size+'|'+file.lastModified));const additions=incoming.filter(file=>{const key=file.name+'|'+file.size+'|'+file.lastModified;if(seen.has(key))return false;seen.add(key);return true;});const next=[...old,...additions];if(next.length>10){setStatus('Maximum 10 additional PDFs allowed. Only the first 10 are kept.');return next.slice(0,10);}return next;});event.currentTarget.value='';}} /></label>
+      <button className="toolbar-button" disabled={!document||mergeFiles.length<1||busy} onClick={()=>void mergePdfs()}>Merge current + {mergeFiles.length}</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
@@ -1274,7 +1283,7 @@ export default function App() {
       </aside>
 
       <aside className="studio-thumbnails" aria-label="PDF navigation panel">
-        {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><button key={index+1} className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button>)}<small>{document.pages} page(s)</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
+        {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><div key={index+1} className="page-mini-wrap"><button className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button><div className="page-order-controls"><button type="button" title="Move page up" aria-label={'Move page '+(index+1)+' up'} disabled={busy||index===0} onClick={()=>void movePageOrder(index+1,index)}>↑</button><button type="button" title="Move page down" aria-label={'Move page '+(index+1)+' down'} disabled={busy||index===document.pages-1} onClick={()=>void movePageOrder(index+1,index+2)}>↓</button></div></div>)}<small>{document.pages} page(s)</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
         {activePanel==='bookmarks' && <div className="nav-results"><b>Bookmarks</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>No PDF bookmarks found in this file.</p>}</div>}
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
