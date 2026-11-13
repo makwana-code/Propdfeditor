@@ -281,6 +281,8 @@ export default function App() {
   const [comments, setComments] = useState<PdfComment[]>([]);
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
   const [drawColor, setDrawColor] = useState('#d62728');
+  const [eraseBrushColor, setEraseBrushColor] = useState('#ffffff');
+  const [searchHighlights, setSearchHighlights] = useState<PdfTextHit[]>([]);
   const [drawWidth, setDrawWidth] = useState(2.5);
   const drawingRef = useRef<DrawStroke | null>(null);
   const drawingBaseRef = useRef<EditorSnapshot | null>(null);
@@ -627,6 +629,11 @@ export default function App() {
 
       // Save always creates a downloadable, edited PDF. Avoid relying on the
       // optional File System Access API / overwrite permission for Ctrl+S.
+      if (command && event.key.toLowerCase() === 'd') {
+        event.preventDefault();
+        if (document && !busy) void exportPdf(false);
+        return;
+      }
       if (command && event.key.toLowerCase() === 's') {
         event.preventDefault();
         if (document && !busy) void confirmAndSavePdf();
@@ -1035,6 +1042,7 @@ export default function App() {
     if (!document || !searchQuery.trim()) { setSearchResults([]); return; }
     const query = searchQuery.trim().toLowerCase();
     const results: Array<{page:number;text:string}> = [];
+    const highlights: PdfTextHit[] = [];
     setBusy(true);
     try {
       const pdf = pdfRef.current || await (async () => {
@@ -1048,10 +1056,20 @@ export default function App() {
         const text = [embeddedText, ocrPages[pageNumber] || ''].filter(Boolean).join(' ');
         const lower = text.toLowerCase();
         const at = lower.indexOf(query);
-        if (at >= 0) results.push({ page:pageNumber, text:text.slice(Math.max(0,at-65), Math.min(text.length,at+query.length+100)) });
+        if (at >= 0) {
+          results.push({ page:pageNumber, text:text.slice(Math.max(0,at-65), Math.min(text.length,at+query.length+100)) });
+          const viewport = pdfPage.getViewport({scale:1});
+          (content.items as any[]).forEach((item,index)=>{
+            if(typeof item.str!=='string'||!item.str.toLowerCase().includes(query)) return;
+            const m=pdfjs.Util.transform(viewport.transform,item.transform); const h=Math.max(3,Math.hypot(m[2],m[3])); const w=Math.max(4,Number(item.width)||item.str.length*h*.45);
+            highlights.push({id:'search-'+pageNumber+'-'+index,page:pageNumber,text:item.str,x:Math.max(0,m[4]/viewport.width),y:Math.max(0,(m[5]-h)/viewport.height),w:Math.min(1,w/viewport.width),h:Math.min(1,h/viewport.height),fontSize:h});
+          });
+        }
       }
       setSearchResults(results);
-      setStatus(results.length + ' page(s) contain “' + searchQuery + '”.');
+      setSearchHighlights(highlights);
+      if(results.length) setPage(results[0].page);
+      setStatus(results.length + ' page(s) contain “' + searchQuery + '”. Matching text is highlighted.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Search failed.');
     } finally {
@@ -1352,9 +1370,11 @@ export default function App() {
       if (pdfBlob.size !== bytes.byteLength || pdfBlob.size < 100) {
         throw new Error('The generated PDF data is incomplete. Your edits are still available.');
       }
+      const verifiedPdf = await PDFDocument.load(pdfBuffer.slice(0));
+      if (verifiedPdf.getPageCount() !== pdf.getPageCount()) throw new Error('PDF verification failed. Your edits are preserved.');
       const downloadName = document.file.name.toLowerCase().endsWith('.pdf')
-        ? document.file.name
-        : document.file.name + '.pdf';
+        ? document.file.name.replace(/\.pdf$/i, '-edited.pdf')
+        : document.file.name + '-edited.pdf';
       let savedToFile = false;
       if (saveHandle) {
         let writable: any = null;
@@ -1535,7 +1555,7 @@ export default function App() {
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
-      <input className="toolbar-color" aria-label="Drawing colour" type="color" value={drawColor} onChange={e=>setDrawColor(e.target.value)}/>
+      <input className="toolbar-color" aria-label={tool==='erase'?'Eraser brush colour':'Drawing colour'} type="color" value={tool==='erase'?eraseBrushColor:drawColor} onChange={e=>tool==='erase'?setEraseBrushColor(e.target.value):setDrawColor(e.target.value)}/>
       <select className="toolbar-select" aria-label="Drawing width" value={drawWidth} onChange={e=>setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option><option value={8}>8 px</option><option value={12}>12 px</option><option value={16}>16 px</option><option value={24}>24 px</option><option value={32}>32 px</option></select>
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
@@ -1555,8 +1575,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
       <span className="toolbar-zoom">{Math.round(fitZoom*zoom/100)}%</span>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
-      <button className="toolbar-button" type="button" onClick={()=>setShowLeftPanel(v=>!v)}>{showLeftPanel?'Hide left panels':'Show left panels'}</button>
-      <button className="toolbar-button" type="button" onClick={()=>setShowRightPanel(v=>!v)}>{showRightPanel?'Hide right panel':'Show right panel'}</button>
+      <span className="toolbar-hint">Ctrl + D · Download</span>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void confirmAndSavePdf()}>💾 Save</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
       <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf(false)}>{busy?'Preparing…':'⬇ Download'}</button>
@@ -1576,14 +1595,15 @@ export default function App() {
         {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><div key={index+1} className="page-mini-wrap" draggable={!busy} onDragStart={event=>{pageDragRef.current=index+1;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',String(index+1));}} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move';}} onDrop={event=>{event.preventDefault();const from=pageDragRef.current||Number(event.dataTransfer.getData('text/plain'));pageDragRef.current=null;if(from>0&&from!==index+1)void movePageOrder(from,index+1);}} onDragEnd={()=>{pageDragRef.current=null;}} title="Drag this page to a new position"><button className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button><div className="page-order-controls"><button type="button" title="Move page up" aria-label={'Move page '+(index+1)+' up'} disabled={busy||index===0} onClick={()=>void movePageOrder(index+1,index)}>↑</button><button type="button" title="Move page down" aria-label={'Move page '+(index+1)+' down'} disabled={busy||index===document.pages-1} onClick={()=>void movePageOrder(index+1,index+2)}>↓</button></div></div>)}<small>{document.pages} page(s) · Drag pages to reorder, or use ↑ ↓</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
         {activePanel==='bookmarks' && <div className="nav-results"><b>Bookmarks</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>No PDF bookmarks found in this file.</p>}</div>}
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
-        {activePanel==='search' && <div className="nav-results"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
+        {activePanel==='search' && <div className="nav-results search-panel"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
       </aside>
       </>}
 
+      <button className="panel-toggle left-panel-toggle" type="button" title={showLeftPanel?'Hide left panel':'Show left panel'} aria-label={showLeftPanel?'Hide left panel':'Show left panel'} onClick={()=>setShowLeftPanel(v=>!v)}>{showLeftPanel?'◧':'▤'}</button>
       <article className="studio-viewer">
         <div className="studio-scroll">
           {document ? (continuousView && continuousUrl ? <div className="page-scroll continuous-pages" ref={stageRef}>{Array.from({length:document.pages},(_,idx)=>{const pageNo=idx+1;return <div key={pageNo} className="continuous-page-wrap"><div className="continuous-page-stage" data-page={pageNo} onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const rect=event.currentTarget.getBoundingClientRect();const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;setPage(pageNo);setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={event=>{if(contextMenu){setContextMenu(null);return;}if((event.target as HTMLElement).closest('.pdf-annotation,button,textarea,input'))return;const point=normalizedPoint(event);if(!point)return;if(tool==='text'){const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setPage(pageNo);setTool('edit');}else if(tool==='comment'){setPage(pageNo);addCommentAt(point,pageNo);}else if(tool==='edit'){const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x-.01&&point.x<=h.x+h.w+.01&&point.y>=h.y-.01&&point.y<=h.y+h.h+.01);if(hit){setPage(pageNo);editExistingText(hit);}}}}><canvas ref={node=>{if(node)continuousCanvasRefs.current.set(pageNo,node);else continuousCanvasRefs.current.delete(pageNo);}}/>{(tool==='edit'||tool==='select')&&continuousHits.filter(hit=>hit.page===pageNo&&!annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();setPage(pageNo);editExistingText(hit);}}/>)}{annotations.filter(a=>a.page===pageNo&&a.coverOriginal&&a.sourceRect).map(a=><div key={a.id+'-source-mask'} className="source-original-mask" style={{left:(a.sourceRect!.x0*100)+'%',top:(a.sourceRect!.y0*100)+'%',width:((a.sourceRect!.x1-a.sourceRect!.x0)*100)+'%',height:((a.sourceRect!.y1-a.sourceRect!.y0)*100)+'%',background:a.maskColor||'#fff'}}/>)}{annotations.filter(a=>a.page===pageNo).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*(pageMetricsRef.current.get(pageNo)?.scale||fitZoom*zoom/10000))+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setPage(pageNo);setSelectedId(a.id);setEditingTextId(a.id);setTool('edit');}}>{editingTextId===a.id && <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)}/>}{editingTextId===a.id ? <textarea value={a.text} readOnly={tool!=='edit'} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit'&&e.button===0)beginMove(e,a)}} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onFocus={e=>{if(a.coverOriginal)e.currentTarget.select();}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',boxSizing:'border-box',margin:0,padding:'1px 2px',border:selectedId===a.id?'1px solid #2878d0':'1px solid transparent',outline:'none',background:a.coverOriginal?'transparent':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/> : <div className="committed-text" style={{width:'100%',height:'100%',whiteSpace:'pre-wrap',overflow:'hidden',background:'transparent',color:a.color,font:'inherit',fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}}>{a.text}</div>}{editingTextId===a.id && (['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}{editingTextId===a.id && <button type="button" className="text-edit-done" onClick={e=>{e.stopPropagation();setEditingTextId(null);setSelectedId(null);setStatus('Text edit applied on the page. Download or Save to commit it into the PDF.');}}>Done</button>}{editingTextId===a.id && <span className="resize-label">Drag to resize</span>}</div>)}{comments.filter(c=>c.page===pageNo).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties}><b>Comment {i+1} · Page {pageNo}</b><span>{c.text}</span></div>)}{contextMenu&&page===pageNo&&<div className="pdf-context-menu" style={{left:Math.max(8,contextMenu.x),top:Math.max(8,contextMenu.y)}} onClick={e=>e.stopPropagation()}>{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);setPage(pageNo);editExistingText(hit);}}>✎ Edit Text</button>}<button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setEditingTextId(id);setTool('edit');}}>T Add Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);addCommentAt(point,pageNo);}}>▤ Add Comment</button>{contextMenu.annotation&&<button type="button" onClick={()=>{const id=contextMenu.annotation!.id;setAnnotations(old=>old.filter(item=>item.id!==id));setSelectedId(null);setEditingTextId(null);setContextMenu(null);setStatus('Text box deleted.');}}>⌫ Delete Text</button>}{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);markNativeTextDeleted(hit);}}>⌫ Delete Original Text</button>}<button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}</div></div>})}</div> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
-            <canvas ref={canvasRef}/>
+            <canvas ref={canvasRef}/>{searchHighlights.filter(hit=>hit.page===page).map(hit=><div key={hit.id} className="pdf-search-highlight" style={{position:'absolute',left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%',background:'rgba(255,220,0,.48)',outline:'1px solid rgba(220,150,0,.9)',pointerEvents:'none',zIndex:8}}/>)}
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {whiteoutDraft && tool==='whiteout' && <div className="pdf-whiteout-draft" style={{position:'absolute',left:(whiteoutDraft.x*100)+'%',top:(whiteoutDraft.y*100)+'%',width:(whiteoutDraft.w*100)+'%',height:(whiteoutDraft.h*100)+'%',background:'#fff',border:'1px dashed #2878d0',pointerEvents:'none',zIndex:20}}/>}
             {(tool==='edit'||tool==='select') ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
@@ -1622,7 +1642,9 @@ export default function App() {
           <small>{comments.length} comment(s) on this document. Use the top Comment button or right-click the page.</small>
         </div>
       </aside>}
+      <button className="panel-toggle right-panel-toggle" type="button" title={showRightPanel?'Hide right panel':'Show right panel'} aria-label={showRightPanel?'Hide right panel':'Show right panel'} onClick={()=>setShowRightPanel(v=>!v)}>{showRightPanel?'◨':'▤'}</button>
     </section>
+    <style>{`.panel-toggle{position:absolute;z-index:30;top:8px;width:30px;height:34px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:18px}.left-panel-toggle{left:8px}.right-panel-toggle{right:8px}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.toolbar-hint{font-size:11px;color:#64748b;white-space:nowrap}`}</style>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
