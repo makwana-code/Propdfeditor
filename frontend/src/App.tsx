@@ -631,14 +631,14 @@ export default function App() {
     window.addEventListener('pointermove', move);
     window.addEventListener('pointerup', stop, { once: true });
     window.addEventListener('pointercancel', stop, { once: true });
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
+    window.document.body.style.cursor = 'col-resize';
+    window.document.body.style.userSelect = 'none';
     return () => {
       window.removeEventListener('pointermove', move);
       window.removeEventListener('pointerup', stop);
       window.removeEventListener('pointercancel', stop);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
+      window.document.body.style.cursor = '';
+      window.document.body.style.userSelect = '';
     };
   }, [resizingPanel]);
 
@@ -1709,7 +1709,7 @@ export default function App() {
         <div className="studio-statusbar"><span>{status || (document?'Page '+page+' of '+document.pages:'Ready')}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Browser download requested for '+downloadFallback.name+'.')}>⬇ Download ready · {downloadFallback.name}</a>}<div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
 
-      {showRightPanel&&<div className="panel-resizer right-resizer" role="separator" aria-orientation="vertical" aria-label="Resize properties panel" title="Drag to resize properties panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('right')}} />}
+      {showRightPanel&&<div className="panel-resizer right-resizer" style={{gridColumn:showLeftPanel?'5':'2'}} role="separator" aria-orientation="vertical" aria-label="Resize properties panel" title="Drag to resize properties panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('right')}} />}
       {!showRightPanel&&<button className="panel-restore right" type="button" title="Show right panel" aria-label="Show right panel" onClick={()=>setShowRightPanel(true)}>▤</button>}
       {showRightPanel && <aside className="studio-properties">
         <div className="panel-heading-control"><b>Properties</b><button className="panel-inline-toggle" type="button" title="Hide right panel" aria-label="Hide right panel" onClick={()=>setShowRightPanel(false)}>◨</button></div>
