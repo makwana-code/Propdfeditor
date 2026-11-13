@@ -444,7 +444,7 @@ export default function App() {
             const corners = [
               [x0, y0], [x0 + uxX * glyphWidth, y0 + uxY * glyphWidth],
               [x0 + vxX * glyphHeight, y0 + vxY * glyphHeight],
-              [x0 + uxX * glyphWidth + vxX * glyphHeight, y0 + uxY * glyphWidth + vyY * glyphHeight]
+              [x0 + uxX * glyphWidth + vxX * glyphHeight, y0 + uxY * glyphWidth + vxY * glyphHeight]
             ];
             const pad = .5 * (window.devicePixelRatio || 1);
             const left = Math.max(0, Math.min(...corners.map(p=>p[0])) - pad);
