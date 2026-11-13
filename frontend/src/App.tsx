@@ -447,7 +447,7 @@ export default function App() {
               [x0 + vxX * glyphHeight, y0 + vxY * glyphHeight],
               [x0 + uxX * glyphWidth + vxX * glyphHeight, y0 + uxY * glyphWidth + vxY * glyphHeight]
             ];
-            const pad = Math.max(2, Math.min(5, glyphHeight * .12));
+            const pad = .75 * (window.devicePixelRatio || 1);
             const left = Math.max(0, Math.min(...corners.map(p=>p[0])) - pad);
             const top = Math.max(0, Math.min(...corners.map(p=>p[1])) - pad);
             const right = Math.min(viewport.width, Math.max(...corners.map(p=>p[0])) + pad);
@@ -563,7 +563,7 @@ export default function App() {
             const glyphWidth = Math.max(4, (Number(item.width) || item.str.length * glyphHeight * .45) * viewport.scale);
             const uxX=m[0]/ux, uxY=m[1]/ux, vxX=m[2]/vx, vxY=m[3]/vx, x0=m[4], y0=m[5];
             const corners=[[x0,y0],[x0+uxX*glyphWidth,y0+uxY*glyphWidth],[x0+vxX*glyphHeight,y0+vxY*glyphHeight],[x0+uxX*glyphWidth+vxX*glyphHeight,y0+uxY*glyphWidth+vxY*glyphHeight]];
-            const pad=Math.max(2,Math.min(5,glyphHeight*.12));
+            const pad=.75*(window.devicePixelRatio||1);
             const left=Math.max(0,Math.min(...corners.map(p=>p[0]))-pad), top=Math.max(0,Math.min(...corners.map(p=>p[1]))-pad);
             const right=Math.min(viewport.width,Math.max(...corners.map(p=>p[0]))+pad), bottom=Math.min(viewport.height,Math.max(...corners.map(p=>p[1]))+pad);
             allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale)});
@@ -853,12 +853,10 @@ export default function App() {
     const targetCanvas = continuousView ? continuousCanvasRefs.current.get(hit.page) : canvasRef.current;
     const pageWidth = targetCanvas?.clientWidth || pageMetricsRef.current.get(hit.page)?.width || 760;
     const pageHeight = targetCanvas?.clientHeight || pageMetricsRef.current.get(hit.page)?.height || 1000;
-    const padX = 3 / pageWidth;
-    const padY = 2 / pageHeight;
-    const boxX = Math.max(0, hit.x - padX);
-    const boxY = Math.max(0, hit.y - padY);
-    const boxW = Math.min(1 - boxX, Math.max(.004, hit.w + padX * 2));
-    const boxH = Math.min(1 - boxY, Math.max(.012, hit.h + padY * 2));
+    const boxX = Math.max(0, hit.x);
+    const boxY = Math.max(0, hit.y);
+    const boxW = Math.min(1 - boxX, Math.max(2 / pageWidth, hit.w));
+    const boxH = Math.min(1 - boxY, Math.max(3 / pageHeight, hit.h));
     // Estimate the cell/page background and original glyph colour from rendered pixels.
     const appearance = sampleTextAppearance(hit);
     const maskColor = appearance.maskColor;
