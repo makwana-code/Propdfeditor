@@ -1338,30 +1338,55 @@ export default function App() {
         });
       }
       const bytes = await pdf.save();
-      const outputBlob = new Blob([bytes as unknown as BlobPart], { type: 'application/pdf' });
+      if (!bytes || bytes.byteLength < 8) {
+        throw new Error('PDF export returned an empty file. Your edits are still available; please try Download again.');
+      }
+      // Copy the exact byte range into a standalone ArrayBuffer. Passing the
+      // PDFDocument Uint8Array view directly to Blob can produce a zero-byte
+      // or truncated file in some browser/runtime combinations.
+      const pdfBuffer = new ArrayBuffer(bytes.byteLength);
+      new Uint8Array(pdfBuffer).set(bytes);
+      const pdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' });
+      if (pdfBlob.size !== bytes.byteLength || pdfBlob.size < 8) {
+        throw new Error('The generated PDF data is incomplete. Your edits are still available.');
+      }
+      const downloadName = document.file.name.toLowerCase().endsWith('.pdf')
+        ? document.file.name
+        : document.file.name + '.pdf';
+      let savedToFile = false;
       if (saveHandle) {
-        const writable = await saveHandle.createWritable();
-        await writable.write(outputBlob);
-        await writable.close();
-      } else {
-        const url = URL.createObjectURL(outputBlob);
+        let writable: any = null;
+        try {
+          writable = await saveHandle.createWritable();
+          await writable.write(pdfBuffer);
+          await writable.close();
+          savedToFile = true;
+        } catch (writeError) {
+          try { await writable?.abort?.(); } catch { /* ignore cleanup failure */ }
+          // If a browser grants the picker but fails to write, still offer a
+          // normal download instead of silently creating an empty file.
+          setStatus('Direct save failed. Starting a standard PDF download…');
+        }
+      }
+      if (!savedToFile) {
+        const url = URL.createObjectURL(pdfBlob);
         const anchor = window.document.createElement('a');
         anchor.href = url;
-        anchor.download = document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name : document.file.name + '.pdf';
+        anchor.download = downloadName;
+        anchor.type = 'application/pdf';
         anchor.rel = 'noopener';
         anchor.style.position = 'fixed';
         anchor.style.left = '-10000px';
         window.document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
-        // Keep the object URL alive long enough for the browser download
-        // manager to consume the generated PDF.
+        // Keep the object URL alive for the browser download manager.
         window.setTimeout(() => URL.revokeObjectURL(url), 120000);
       }
       // Make the committed PDF the new editor source; subsequent saves must not
       // replay edits against the original, unmodified bytes.
-      const committedBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
-      const committedFile = new File([outputBlob], document.file.name, { type: 'application/pdf' });
+      const committedBytes = pdfBuffer.slice(0);
+      const committedFile = new File([pdfBlob], document.file.name, { type: 'application/pdf' });
       setDocument({ file: committedFile, bytes: committedBytes, pages: pdf.getPageCount() });
       setAnnotations([]);
       setEditingTextId(null);
@@ -1370,11 +1395,9 @@ export default function App() {
       setOcrWords({});
       setOcrPages({});
       setSelectedId(null);
-      setStatus(saveHandle
-        ? (saveToFile ? 'Saved changes to the currently opened PDF file.' : 'Updated PDF saved successfully. The editor is now using the saved version.')
-        : (saveToFile
-          ? 'This browser cannot overwrite the opened file. The updated PDF was downloaded with the original filename.'
-          : 'Updated PDF download started. The editor is now using the saved version.'));
+      setStatus(savedToFile
+        ? (saveToFile ? 'Saved changes to the selected PDF file.' : 'Updated PDF downloaded successfully. The editor is now using the saved version.')
+        : 'Updated PDF download started successfully. File size: ' + Math.round(pdfBlob.size / 1024) + ' KB. The editor is now using the saved version.');
 
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
