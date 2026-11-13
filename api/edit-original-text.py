@@ -75,6 +75,21 @@ def resolve_original_text(page, old_text, target):
 
     candidates.sort(key=lambda item: rect_distance(item[0], target))
     chosen, span = candidates[0]
+    # page.search_for() returns the best exact rectangle but not its font span.
+    # Recover the nearest overlapping native span so replacement inherits the
+    # source font metrics, colour and baseline instead of silently defaulting.
+    if span is None:
+        nearest = []
+        for block in page.get_text("dict").get("blocks", []):
+            for line in block.get("lines", []):
+                for candidate_span in line.get("spans", []):
+                    candidate_rect = fitz.Rect(candidate_span.get("bbox", (0, 0, 0, 0)))
+                    if candidate_rect.intersects(chosen):
+                        overlap = candidate_rect & chosen
+                        nearest.append((-(overlap.get_area()), rect_distance(candidate_rect, chosen), candidate_span))
+        if nearest:
+            nearest.sort(key=lambda item: (item[0], item[1]))
+            span = nearest[0][2]
     if len(candidates) > 1 and rect_distance(candidates[1][0], target) + 1 < rect_distance(chosen, target):
         # The nearest geometric match wins; do not reject merely because the
         # same phrase occurs elsewhere in the document.
@@ -169,27 +184,17 @@ class handler(BaseHTTPRequestHandler):
                         (color_int & 255) / 255,
                     )
 
-                    box_data = edit.get("box") or {}
-                    page_rect = page.rect
-                    display_box = fitz.Rect(
-                        float(box_data.get("x0", edit["rect"]["x0"])) * page_rect.width,
-                        float(box_data.get("y0", edit["rect"]["y0"])) * page_rect.height,
-                        float(box_data.get("x1", edit["rect"]["x1"])) * page_rect.width,
-                        float(box_data.get("y1", edit["rect"]["y1"])) * page_rect.height,
-                    )
-                    box = display_box * page.derotation_matrix if page.rotation else display_box
-                    box &= page.cropbox
-                    if box.is_empty:
-                        box = source_rect
-                    box.x1 = max(box.x1, box.x0 + 4)
-
+                    # Use the native text span's baseline when available. The UI
+                    # overlay box is only a visual editor; it must not redefine the
+                    # source PDF coordinates during export.
                     source_font = ((span or {}).get("font", "")).lower()
                     font_name = "cour" if "mono" in source_font else (
                         "tiro" if any(term in source_font for term in ("times", "serif")) else "helv"
                     )
-                    baseline_y = box.y0 + font_size
+                    origin = (span or {}).get("origin")
+                    baseline_y = float(origin[1]) if origin and len(origin) > 1 else source_rect.y1 - max(1, font_size * 0.18)
                     inserted = page.insert_text(
-                        (box.x0, baseline_y), replacement,
+                        (source_rect.x0, baseline_y), replacement,
                         fontname=font_name, fontsize=font_size,
                         color=color, overlay=True,
                     )
