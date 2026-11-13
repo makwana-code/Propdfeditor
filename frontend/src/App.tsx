@@ -307,6 +307,8 @@ export default function App() {
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [bookmarks, setBookmarks] = useState<Array<{title:string; page:number}>>([]);
   const [textHits, setTextHits] = useState<PdfTextHit[]>([]);
+  const [continuousHits, setContinuousHits] = useState<PdfTextHit[]>([]);
+  const continuousCanvasRefs = useRef<Map<number, HTMLCanvasElement>>(new Map());
   const [searchQuery, setSearchQuery] = useState('');
   const [searchResults, setSearchResults] = useState<Array<{page:number;text:string}>>([]);
   const [ocrPages, setOcrPages] = useState<Record<number,string>>({});
@@ -515,6 +517,56 @@ export default function App() {
   }, [document, page, zoom]);
 
   useEffect(() => {
+    if (!continuousView || !document) return;
+    let cancelled = false;
+    async function renderAllPages() {
+      try {
+        const loading = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
+        const pdf = await loading.promise;
+        const allHits: PdfTextHit[] = [];
+        for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
+          if (cancelled) return;
+          const canvas = continuousCanvasRefs.current.get(pageNumber);
+          if (!canvas) continue;
+          const pdfPage = await pdf.getPage(pageNumber);
+          const base = pdfPage.getViewport({ scale: 1 });
+          const availableWidth = Math.min(900, Math.max(320, (stageRef.current?.clientWidth || 820) - 56));
+          const viewport = pdfPage.getViewport({ scale: availableWidth / base.width });
+          const dpr = Math.min(1.25, window.devicePixelRatio || 1);
+          canvas.width = Math.round(viewport.width * dpr);
+          canvas.height = Math.round(viewport.height * dpr);
+          canvas.style.width = viewport.width + 'px';
+          canvas.style.height = viewport.height + 'px';
+          const slot = canvas.closest('.continuous-page-stage') as HTMLElement|null;
+          if (slot) { slot.style.width = viewport.width + 'px'; slot.style.height = viewport.height + 'px'; }
+          const ctx = canvas.getContext('2d');
+          if (!ctx) continue;
+          ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+          await pdfPage.render({ canvasContext: ctx, viewport }).promise;
+          const content = await pdfPage.getTextContent();
+          (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform)).forEach((item:any,index:number) => {
+            const m = pdfjs.Util.transform(viewport.transform, item.transform);
+            const glyphHeight = Math.max(3, Math.hypot(m[2], m[3]));
+            const ux = Math.hypot(m[0], m[1]) || 1, vx = Math.hypot(m[2], m[3]) || glyphHeight;
+            const glyphWidth = Math.max(4, (Number(item.width) || item.str.length * glyphHeight * .45) * viewport.scale);
+            const uxX=m[0]/ux, uxY=m[1]/ux, vxX=m[2]/vx, vxY=m[3]/vx, x0=m[4], y0=m[5];
+            const corners=[[x0,y0],[x0+uxX*glyphWidth,y0+uxY*glyphWidth],[x0+vxX*glyphHeight,y0+vxY*glyphHeight],[x0+uxX*glyphWidth+vxX*glyphHeight,y0+uxY*glyphWidth+vxY*glyphHeight]];
+            const pad=Math.max(2,Math.min(5,glyphHeight*.12));
+            const left=Math.max(0,Math.min(...corners.map(p=>p[0]))-pad), top=Math.max(0,Math.min(...corners.map(p=>p[1]))-pad);
+            const right=Math.min(viewport.width,Math.max(...corners.map(p=>p[0]))+pad), bottom=Math.min(viewport.height,Math.max(...corners.map(p=>p[1]))+pad);
+            allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale)});
+          });
+        }
+        if (!cancelled) setContinuousHits(allHits);
+      } catch (error) {
+        if (!cancelled) setStatus(error instanceof Error ? error.message : 'Unable to render continuous PDF pages.');
+      }
+    }
+    void renderAllPages();
+    return () => { cancelled = true; };
+  }, [continuousView, document, zoom]);
+
+  useEffect(() => {
     function onKey(event: KeyboardEvent) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
         event.preventDefault();
@@ -679,8 +731,10 @@ export default function App() {
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
 
-  function normalizedPoint(event: { clientX: number; clientY: number }) {
-    const canvas = canvasRef.current;
+  function normalizedPoint(event: { clientX: number; clientY: number; currentTarget?: EventTarget | null }) {
+    const target = event.currentTarget instanceof HTMLElement ? event.currentTarget : null;
+    const stage = target?.closest('.continuous-page-stage') as HTMLElement|null;
+    const canvas = stage?.querySelector('canvas') || canvasRef.current;
     if (!canvas) return null;
     const rect = canvas.getBoundingClientRect();
     return { x: Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width)), y: Math.max(0, Math.min(1, (event.clientY - rect.top) / rect.height)) };
@@ -713,7 +767,7 @@ export default function App() {
   }
 
   function sampleTextAppearance(hit: PdfTextHit) {
-    const canvas = canvasRef.current;
+    const canvas = continuousView ? (continuousCanvasRefs.current.get(hit.page) || canvasRef.current) : canvasRef.current;
     if (!canvas || !canvas.width || !canvas.height) return { maskColor:'#ffffff', color:'#222222' };
     const ctx = canvas.getContext('2d');
     if (!ctx) return { maskColor:'#ffffff', color:'#222222' };
@@ -790,7 +844,7 @@ export default function App() {
     setStatus('Text selected. Edit while Edit Text is active; switch to Select by clicking the selected text again, then drag the text itself to move it.');
   }
 
-  function addCommentAt(point: {x:number;y:number}) {
+  function addCommentAt(point: {x:number;y:number}, targetPage = page) {
     // Ask for the note only after the user has chosen the exact page position.
     const entered = commentDraft.trim() || window.prompt('Enter your comment:')?.trim() || '';
     if (!entered) {
@@ -800,14 +854,14 @@ export default function App() {
       return;
     }
     const comment: PdfComment = {
-      id: crypto.randomUUID(), page, x: point.x, y: point.y,
+      id: crypto.randomUUID(), page: targetPage, x: point.x, y: point.y,
       boxX: Math.min(.74, Math.max(.02, point.x + .02)),
       boxY: Math.min(.88, Math.max(.02, point.y + .01)), text: entered
     };
     setComments(old => [...old, comment]);
     setCommentDraft('');
     setTool('select');
-    setStatus('Comment added at the selected position on page ' + page + '.');
+    setStatus('Comment added at the selected position on page ' + targetPage + '.');
   }
 
   async function runOcr() {
@@ -1363,7 +1417,7 @@ export default function App() {
 
       <article className="studio-viewer">
         <div className="studio-scroll">
-          {document ? (continuousView && continuousUrl ? <iframe className="continuous-pdf-view" title="Continuous PDF pages" src={continuousUrl+'#toolbar=1&navpanes=0&view=FitH'} /> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
+          {document ? (continuousView && continuousUrl ? <div className="page-scroll continuous-pages" ref={stageRef}>{Array.from({length:document.pages},(_,idx)=>{const pageNo=idx+1;return <div key={pageNo} className="continuous-page-wrap"><div className="continuous-page-stage" data-page={pageNo} onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const rect=event.currentTarget.getBoundingClientRect();const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;setPage(pageNo);setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={event=>{if(contextMenu){setContextMenu(null);return;}if((event.target as HTMLElement).closest('.pdf-annotation,button,textarea,input'))return;const point=normalizedPoint(event);if(!point)return;if(tool==='text'){const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setPage(pageNo);setTool('edit');}else if(tool==='comment'){setPage(pageNo);addCommentAt(point,pageNo);}else if(tool==='edit'){const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x-.01&&point.x<=h.x+h.w+.01&&point.y>=h.y-.01&&point.y<=h.y+h.h+.01);if(hit){setPage(pageNo);editExistingText(hit);}}}}><canvas ref={node=>{if(node)continuousCanvasRefs.current.set(pageNo,node);else continuousCanvasRefs.current.delete(pageNo);}}/>{(tool==='edit'||tool==='select')&&continuousHits.filter(hit=>hit.page===pageNo&&!annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();setPage(pageNo);editExistingText(hit);}}/>)}{annotations.filter(a=>a.page===pageNo).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setPage(pageNo);setSelectedId(a.id);setTool('edit');}}><textarea value={a.text} readOnly={tool!=='edit'} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',boxSizing:'border-box',margin:0,padding:'1px 2px',border:selectedId===a.id?'1px solid #2878d0':'1px solid transparent',outline:'none',background:a.coverOriginal?(a.maskColor||'#fff'):'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/></div>)}{comments.filter(c=>c.page===pageNo).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties}><b>Comment {i+1} · Page {pageNo}</b><span>{c.text}</span></div>)}{contextMenu&&page===pageNo&&<div className="pdf-context-menu" style={{left:Math.max(8,contextMenu.x),top:Math.max(8,contextMenu.y)}} onClick={e=>e.stopPropagation()}><button type="button" onClick={()=>{const hit=contextMenu.hit;const point=contextMenu.point;setContextMenu(null);setPage(pageNo);if(hit)editExistingText(hit);else{const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setTool('edit');}}}>T Add Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);addCommentAt(point,pageNo);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}</div></div>})}</div> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {whiteoutDraft && tool==='whiteout' && <div className="pdf-whiteout-draft" style={{position:'absolute',left:(whiteoutDraft.x*100)+'%',top:(whiteoutDraft.y*100)+'%',width:(whiteoutDraft.w*100)+'%',height:(whiteoutDraft.h*100)+'%',background:'#fff',border:'1px dashed #2878d0',pointerEvents:'none',zIndex:20}}/>}
