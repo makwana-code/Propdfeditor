@@ -309,6 +309,10 @@ export default function App() {
   const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'>('pages');
   const [showLeftPanel, setShowLeftPanel] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
+  const [leftPanelWidth, setLeftPanelWidth] = useState(194);
+  const [rightPanelWidth, setRightPanelWidth] = useState(355);
+  const [resizingPanel, setResizingPanel] = useState<'left'|'right'|null>(null);
+  const [zoomInput, setZoomInput] = useState('100');
   const [bookmarks, setBookmarks] = useState<Array<{title:string; page:number}>>([]);
   const [textHits, setTextHits] = useState<PdfTextHit[]>([]);
   const [continuousHits, setContinuousHits] = useState<PdfTextHit[]>([]);
@@ -616,6 +620,27 @@ export default function App() {
     void renderAllPages();
     return () => { cancelled = true; };
   }, [continuousView, document, zoom, ocrWords]);
+
+  useEffect(() => {
+    if (!resizingPanel) return;
+    const move = (event: PointerEvent) => {
+      if (resizingPanel === 'left') setLeftPanelWidth(Math.max(150, Math.min(520, event.clientX - 82)));
+      else setRightPanelWidth(Math.max(230, Math.min(620, window.innerWidth - event.clientX)));
+    };
+    const stop = () => setResizingPanel(null);
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', stop, { once: true });
+    window.addEventListener('pointercancel', stop, { once: true });
+    document.body.style.cursor = 'col-resize';
+    document.body.style.userSelect = 'none';
+    return () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', stop);
+      window.removeEventListener('pointercancel', stop);
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, [resizingPanel]);
 
   useEffect(() => {
     // Capture at window level so Chromium never applies its native page zoom.
@@ -1428,15 +1453,21 @@ export default function App() {
       if (saveHandle) {
         let writable: any = null;
         try {
-          writable = await saveHandle.createWritable();
-          await writable.write(pdfBuffer);
+          writable = await saveHandle.createWritable({ keepExistingData: false });
+          await writable.write({ type: 'write', position: 0, data: downloadBytes });
+          await writable.truncate(downloadBytes.byteLength);
           await writable.close();
+          writable = null;
+          const writtenFile = await saveHandle.getFile();
+          if (!writtenFile || writtenFile.size !== downloadBytes.byteLength || writtenFile.size < 100) throw new Error('Saved file size verification failed: expected '+downloadBytes.byteLength+' bytes, got '+(writtenFile?.size ?? 0)+'.');
+          const writtenHead = new Uint8Array(await writtenFile.slice(0,5).arrayBuffer());
+          if (new TextDecoder().decode(writtenHead) !== '%PDF-') throw new Error('Saved file does not contain a valid PDF header.');
           savedToFile = true;
         } catch (writeError) {
           try { await writable?.abort?.(); } catch { /* ignore cleanup failure */ }
           // If a browser grants the picker but fails to write, still offer a
           // normal download instead of silently creating an empty file.
-          setStatus('Direct save failed. Starting a standard PDF download…');
+          setStatus('Direct save failed: ' + (writeError instanceof Error ? writeError.message : 'Unknown file write error') + '. Use the Download ready link below.');
         }
       }
       if (!savedToFile) {
@@ -1626,7 +1657,7 @@ export default function App() {
       <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);setMergeFiles(old=>{const seen=new Set(old.map(file=>file.name+'|'+file.size+'|'+file.lastModified));const additions=incoming.filter(file=>{const key=file.name+'|'+file.size+'|'+file.lastModified;if(seen.has(key))return false;seen.add(key);return true;});const next=[...old,...additions];if(next.length>10){setStatus('Maximum 10 additional PDFs allowed. Only the first 10 are kept.');return next.slice(0,10);}return next;});event.currentTarget.value='';}} /></label>
       <button className="toolbar-button" disabled={!document||mergeFiles.length<1||busy} onClick={()=>void mergePdfs()}>Merge current + {mergeFiles.length}</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.max(25,z-10))}>−</button>
-      <label className="toolbar-zoom-control" title="Type a zoom percentage and press Enter"><input className="toolbar-zoom-input" aria-label="PDF zoom percentage" type="number" min="25" max="500" step="1" disabled={!document} value={Math.round(fitZoom*zoom/100)} onChange={event=>{const value=Number(event.target.value);if(Number.isFinite(value)&&value>=25&&value<=500)setZoom(Math.round(value/Math.max(1,fitZoom)*100));}} onKeyDown={event=>{if(event.key==='Enter'){event.currentTarget.blur();}}}/> <span>%</span></label>
+      <label className="toolbar-zoom-control" title="Type 25–500 and press Enter"><input className="toolbar-zoom-input" aria-label="PDF zoom percentage" type="number" min="25" max="500" step="1" disabled={!document} value={zoomInput} onFocus={()=>setZoomInput(String(Math.round(fitZoom*zoom/100)))} onChange={event=>setZoomInput(event.target.value)} onBlur={()=>{const value=Number(zoomInput);if(Number.isFinite(value)&&value>=25&&value<=500)setZoom(Math.round(value/Math.max(1,fitZoom)*100));else setZoomInput(String(Math.round(fitZoom*zoom/100)));}} onKeyDown={event=>{if(event.key==='Enter'){event.preventDefault();event.currentTarget.blur();}}}/> <span>%</span></label>
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void confirmAndSavePdf()}>💾 Save</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
@@ -1634,7 +1665,7 @@ export default function App() {
       
     </nav>
 
-    <section className="studio-workspace" style={{gridTemplateColumns:`${showLeftPanel?'82px 112px ':''}minmax(0,1fr)${showRightPanel?' 355px':''}`}} onWheelCapture={event=>{if(event.ctrlKey||event.metaKey){event.preventDefault();event.stopPropagation();}}}>
+    <section className="studio-workspace" style={{gridTemplateColumns:`${showLeftPanel?'82px '+leftPanelWidth+'px 6px ':''}minmax(0,1fr)${showRightPanel?' 6px '+rightPanelWidth+'px':''}`}} onWheelCapture={event=>{if(event.ctrlKey||event.metaKey){event.preventDefault();event.stopPropagation();}}}>
       {showLeftPanel && <>
       <aside className="studio-pages">
         <button className={activePanel==='pages'?'side-tab active':'side-tab'} type="button" onClick={()=>setActivePanel('pages')}>▣<span>Pages</span></button>
@@ -1649,6 +1680,7 @@ export default function App() {
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results search-panel"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
       </aside>
+      <div className="panel-resizer left-resizer" role="separator" aria-orientation="vertical" aria-label="Resize navigation panel" title="Drag to resize navigation panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('left')}} />
       </>}
 
       {!showLeftPanel&&<button className="panel-restore left" type="button" title="Show left panel" aria-label="Show left panel" onClick={()=>setShowLeftPanel(true)}>▤</button>}
@@ -1677,6 +1709,7 @@ export default function App() {
         <div className="studio-statusbar"><span>{status || (document?'Page '+page+' of '+document.pages:'Ready')}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Browser download requested for '+downloadFallback.name+'.')}>⬇ Download ready · {downloadFallback.name}</a>}<div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
 
+      {showRightPanel&&<div className="panel-resizer right-resizer" role="separator" aria-orientation="vertical" aria-label="Resize properties panel" title="Drag to resize properties panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('right')}} />}
       {!showRightPanel&&<button className="panel-restore right" type="button" title="Show right panel" aria-label="Show right panel" onClick={()=>setShowRightPanel(true)}>▤</button>}
       {showRightPanel && <aside className="studio-properties">
         <div className="panel-heading-control"><b>Properties</b><button className="panel-inline-toggle" type="button" title="Hide right panel" aria-label="Hide right panel" onClick={()=>setShowRightPanel(false)}>◨</button></div>
@@ -1697,7 +1730,7 @@ export default function App() {
         </div>
       </aside>}
     </section>
-    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.toolbar-zoom-control{display:inline-flex;align-items:center;gap:2px;border:1px solid #cbd5e1;border-radius:6px;padding:0 5px;height:34px;background:#fff;color:#334155}.toolbar-zoom-input{width:48px;border:0;outline:0;text-align:center;font:inherit;font-size:13px;color:inherit;background:transparent;padding:0}.toolbar-zoom-input::-webkit-inner-spin-button,.toolbar-zoom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.download-retry-link{display:inline-flex;align-items:center;font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:6px 10px;text-decoration:none;white-space:nowrap;cursor:pointer;position:relative;z-index:100}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
+    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.toolbar-zoom-control{display:inline-flex;align-items:center;gap:2px;border:1px solid #cbd5e1;border-radius:6px;padding:0 5px;height:34px;background:#fff;color:#334155}.toolbar-zoom-input{width:48px;border:0;outline:0;text-align:center;font:inherit;font-size:13px;color:inherit;background:transparent;padding:0}.toolbar-zoom-input::-webkit-inner-spin-button,.toolbar-zoom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.panel-resizer{width:6px;min-width:6px;cursor:col-resize;position:relative;z-index:30;touch-action:none;background:transparent}.panel-resizer:hover,.panel-resizer:active{background:#93c5fd}.left-resizer{grid-column:3;grid-row:1}.right-resizer{grid-column:5;grid-row:1;margin-left:-3px}.download-retry-link{display:inline-flex;align-items:center;font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:6px 10px;text-decoration:none;white-space:nowrap;cursor:pointer;position:relative;z-index:100}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
