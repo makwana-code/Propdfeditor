@@ -430,11 +430,9 @@ export default function App() {
         ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
         await pdfPage.render({ canvasContext: ctx, viewport }).promise;
         const content = await pdfPage.getTextContent();
-        const hits: PdfTextHit[] = (content.items as any[])
+        const rawHits: PdfTextHit[] = (content.items as any[])
           .filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform))
           .map((item:any,index:number) => {
-            // Build the hit rectangle from all four transformed text corners. This also
-            // supports rotated/skewed text instead of assuming every run is horizontal.
             const m = pdfjs.Util.transform(viewport.transform, item.transform);
             const glyphHeight = Math.max(3, Math.hypot(m[2], m[3]));
             const ux = Math.hypot(m[0], m[1]) || 1;
@@ -446,21 +444,49 @@ export default function App() {
             const corners = [
               [x0, y0], [x0 + uxX * glyphWidth, y0 + uxY * glyphWidth],
               [x0 + vxX * glyphHeight, y0 + vxY * glyphHeight],
-              [x0 + uxX * glyphWidth + vxX * glyphHeight, y0 + uxY * glyphWidth + vxY * glyphHeight]
+              [x0 + uxX * glyphWidth + vxX * glyphHeight, y0 + uxY * glyphWidth + vyY * glyphHeight]
             ];
-            const pad = .75 * (window.devicePixelRatio || 1);
+            const pad = .5 * (window.devicePixelRatio || 1);
             const left = Math.max(0, Math.min(...corners.map(p=>p[0])) - pad);
             const top = Math.max(0, Math.min(...corners.map(p=>p[1])) - pad);
             const right = Math.min(viewport.width, Math.max(...corners.map(p=>p[0])) + pad);
             const bottom = Math.min(viewport.height, Math.max(...corners.map(p=>p[1])) + pad);
-            return {
-              id: page + '-' + index, page, text:item.str,
-              x:left/viewport.width, y:top/viewport.height,
-              w:Math.max(.004,(right-left)/viewport.width),
-              h:Math.max(.012,(bottom-top)/viewport.height),
-              fontSize:glyphHeight/Math.max(.01,viewport.scale)
-            };
+            return { id: page + '-' + index, page, text:item.str, x:left/viewport.width, y:top/viewport.height,
+              w:Math.max(.004,(right-left)/viewport.width), h:Math.max(.012,(bottom-top)/viewport.height),
+              fontSize:glyphHeight/Math.max(.01,viewport.scale) };
           });
+        // Build selectable text-line blocks from adjacent PDF text runs. This lets
+        // users replace a whole visible line instead of fighting tiny per-run targets.
+        const sortedHits = [...rawHits].sort((a,b) => (a.y+a.h/2)-(b.y+b.h/2) || a.x-b.x);
+        const lineGroups: PdfTextHit[][] = [];
+        for (const hit of sortedHits) {
+          const line = lineGroups.find(group => {
+            const first = group[0];
+            const centerA = first.y + first.h/2, centerB = hit.y + hit.h/2;
+            return Math.abs(centerA-centerB) <= Math.max(first.h,hit.h)*.55;
+          });
+          if (line) line.push(hit); else lineGroups.push([hit]);
+        }
+        const hits: PdfTextHit[] = [];
+        for (const line of lineGroups) {
+          line.sort((a,b)=>a.x-b.x);
+          let block: PdfTextHit[] = [];
+          const flush = () => {
+            if (!block.length) return;
+            const first=block[0], last=block[block.length-1];
+            const x=Math.min(...block.map(v=>v.x)), y=Math.min(...block.map(v=>v.y));
+            const right=Math.max(...block.map(v=>v.x+v.w)), bottom=Math.max(...block.map(v=>v.y+v.h));
+            const text=block.map((v,i)=>i===0?v.text:((v.x-(block[i-1].x+block[i-1].w))>Math.max(v.h,block[i-1].h)*.18?' ':'')+v.text).join('');
+            hits.push({id:first.id+'-line',page,text,x,y,w:right-x,h:bottom-y,fontSize:block.reduce((sum,v)=>sum+v.fontSize,0)/block.length});
+            block=[];
+          };
+          for (const hit of line) {
+            const previous=block[block.length-1];
+            if (previous && hit.x-(previous.x+previous.w)>Math.max(hit.h,previous.h)*1.8) flush();
+            block.push(hit);
+          }
+          flush();
+        }
         if (!cancelled && hits.length) {
           setTextHits(hits);
         } else if (!cancelled) {
@@ -1464,10 +1490,10 @@ export default function App() {
             {(tool==='edit'||tool==='select') ? textHits.filter(hit=>hit.page===page && !annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();editExistingText(hit)}} aria-label={'Edit original PDF text: '+hit.text}/>) : null}
             {annotations.filter(a=>a.page===page).map(a=>a.kind==='whiteout' ? <div key={a.id} data-annotation-id={a.id} className={'pdf-annotation pdf-whiteout '+(selectedId===a.id?'selected':'')} title="Whiteout area" onClick={e=>{e.stopPropagation();setSelectedId(a.id)}} style={{position:'absolute',left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',background:'#fff',border:selectedId===a.id?'1px dashed #2878d0':'1px solid transparent',boxSizing:'border-box',zIndex:10,cursor:'pointer'}}/> : <div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',cursor:'default','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setSelectedId(a.id);setEditingTextId(a.id);setTool('edit')}}>
               <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)} />
-              <textarea readOnly={tool!=='edit'} value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit' && e.button===0)beginMove(e,a)}} onPointerUp={e=>{if(tool==='edit')saveResizedBox(a.id,e.currentTarget)}} autoFocus={Boolean(a.coverOriginal && selectedId===a.id && tool==='edit')} onClick={e=>{e.stopPropagation();setSelectedId(a.id);if(tool!=='edit')setTool('select')}} onFocus={e=>{setSelectedId(a.id);if(a.coverOriginal && tool==='edit')e.currentTarget.select()}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid '+(selectedId===a.id?'#2878d0':'transparent'),outline:'none',background:a.coverOriginal?'#ffffff':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:a.coverOriginal?'none':'both',overflow:a.coverOriginal?'hidden':'auto',whiteSpace:'pre-wrap'}}/>
-              {(['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
+              {editingTextId===a.id ? <textarea autoFocus value={a.text} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} onClick={e=>e.stopPropagation()} aria-label="Edit existing PDF text" style={{display:'block',width:'100%',height:'100%',minWidth:0,minHeight:0,boxSizing:'border-box',margin:0,padding:'1px 2px',border:'1px solid #2878d0',outline:'none',background:a.coverOriginal?(a.maskColor||'#fff'):'rgba(255,255,255,.96)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.12,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/> : <div className="committed-text" onClick={e=>{e.stopPropagation();setSelectedId(a.id);setEditingTextId(a.id);setTool('edit')}} style={{display:'block',width:'100%',height:'100%',whiteSpace:'pre-wrap',overflow:'hidden',background:a.coverOriginal?(a.maskColor||'#fff'):'transparent',color:a.color,font:'inherit',fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}}>{a.text}</div>}
+              {editingTextId===a.id && (['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}
               {editingTextId===a.id && <button type="button" className="text-edit-done" onClick={e=>{e.stopPropagation();setEditingTextId(null);setSelectedId(a.id);setStatus('Text edit applied on the page. Download or Save to commit it into the PDF.');}}>Done</button>}
-              <span className="resize-label">Drag to resize</span>
+              {editingTextId===a.id && <span className="resize-label">Drag to resize</span>}
             </div>)}
             {contextMenu && <div className="pdf-context-menu" style={{left:Math.min(contextMenu.x,Math.max(8,(canvasRef.current?.clientWidth||500)-170)),top:Math.min(contextMenu.y,Math.max(8,(canvasRef.current?.clientHeight||700)-100))}} onClick={e=>e.stopPropagation()}><button type="button" onClick={()=>{const hit=contextMenu.hit;const ann=contextMenu.annotation;setContextMenu(null);if(ann){setSelectedId(ann.id);setEditingTextId(ann.id);setTool('edit');}else if(hit){editExistingText(hit);}else{setStatus('Right-click directly on text to edit it.');}}}>✎ Edit Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);addCommentAt(point);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}\n            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map(c=>{const bx=(c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*1000;const by=(c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*1000;const d='M '+(c.x*1000)+' '+(c.y*1000)+' L '+(bx+120)+' '+(by+35);return <g key={c.id}><path d={d} stroke="#d28b27" strokeOpacity="0.001" strokeWidth="24" fill="none" style={{pointerEvents:'stroke',cursor:'grab',touchAction:'none'}} onPointerDown={e=>beginConnectorMove(e,c)} aria-label="Drag dotted comment connector"/><path d={d} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5" style={{pointerEvents:'none'}}/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3" style={{pointerEvents:'none'}}/></g>})}</svg>
             {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties} onPointerDown={e=>beginCommentMove(e,c)} title="Drag anywhere on this comment box to move it"><b className="comment-drag-handle">Comment {i+1} · Page {c.page} <span>↕ Move</span></b><span>{c.text}</span><button type="button" aria-label="Delete comment" onPointerDown={e=>e.stopPropagation()} onClick={e=>{e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
