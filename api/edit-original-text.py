@@ -67,10 +67,39 @@ def resolve_original_text(page, old_text, target):
             if len(clean_text(combined)) > len(wanted) + 24:
                 break
 
+    # Geometry-first fallback: PDF.js text runs and native PDF spans often
+    # differ in whitespace, ligatures, or run boundaries. If exact text matching
+    # fails, use the actual selected rectangle to gather the native spans it covers.
+    if not candidates:
+        geometric = []
+        for block in page.get_text("dict").get("blocks", []):
+            for line in block.get("lines", []):
+                selected_spans = []
+                for candidate_span in line.get("spans", []):
+                    candidate_rect = fitz.Rect(candidate_span.get("bbox", (0, 0, 0, 0)))
+                    if candidate_rect.is_empty or not candidate_rect.intersects(target):
+                        continue
+                    overlap = candidate_rect & target
+                    # Ignore incidental glyph touches at the edge of a hit box.
+                    if overlap.get_area() < min(candidate_rect.get_area(), target.get_area()) * 0.12:
+                        continue
+                    selected_spans.append((candidate_rect, candidate_span))
+                if selected_spans:
+                    selected_spans.sort(key=lambda item: item[0].x0)
+                    union = fitz.Rect(selected_spans[0][0])
+                    for candidate_rect, _ in selected_spans[1:]:
+                        union |= candidate_rect
+                    # Keep only the spans that substantially overlap the target.
+                    if union.intersects(target):
+                        geometric.append((union, selected_spans[0][1]))
+        if geometric:
+            geometric.sort(key=lambda item: rect_distance(item[0], target))
+            candidates.extend(geometric)
+
     if not candidates:
         raise ValueError(
-            "Could not locate the selected text in the PDF's native text layer. "
-            "This page may be scanned, outlined, or have a different text encoding."
+            "Could not locate editable native PDF text in this selected area. "
+            "Scanned or outlined text needs OCR/image replacement instead."
         )
 
     candidates.sort(key=lambda item: rect_distance(item[0], target))
