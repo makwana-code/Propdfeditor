@@ -616,17 +616,46 @@ export default function App() {
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
+      const target = event.target as HTMLElement | null;
+      const isTyping = !!target && (
+        target.isContentEditable ||
+        target.tagName === 'TEXTAREA' ||
+        target.tagName === 'INPUT' ||
+        target.tagName === 'SELECT'
+      );
+      const command = event.ctrlKey || event.metaKey;
+
+      // Save always creates a downloadable, edited PDF. Avoid relying on the
+      // optional File System Access API / overwrite permission for Ctrl+S.
+      if (command && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        if (document && !busy) void exportPdf(true);
+        if (document && !busy) void exportPdf(false);
         return;
       }
-      if ((event.key === 'Delete' || event.key === 'Backspace') && selectedId && !(event.target instanceof HTMLTextAreaElement)) {
+
+      // Keep the browser's native undo while the user is typing in a field;
+      // otherwise undo the latest editor operation.
+      if (command && event.key.toLowerCase() === 'z' && !event.shiftKey) {
+        if (!isTyping) {
+          event.preventDefault();
+          if (!busy) undoEdit();
+        }
+        return;
+      }
+
+      // Delete removes the currently selected editor object, not characters
+      // from a text field. Original PDF text edits are represented as objects.
+      if (event.key === 'Delete' && !isTyping && selectedId && !busy) {
+        event.preventDefault();
         setAnnotations(old => old.filter(a => a.id !== selectedId));
         setSelectedId(null);
+        setEditingTextId(null);
+        setStatus('Selected text or object deleted.');
+        return;
       }
-      if ((event.ctrlKey || event.metaKey) && event.key === '+') setZoom(z => Math.min(300, z + 10));
-      if ((event.ctrlKey || event.metaKey) && event.key === '-') setZoom(z => Math.max(25, z - 10));
+
+      if (command && event.key === '+') setZoom(z => Math.min(300, z + 10));
+      if (command && event.key === '-') setZoom(z => Math.max(25, z - 10));
     }
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -1480,7 +1509,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
       <button className="toolbar-button" type="button" onClick={()=>setShowLeftPanel(v=>!v)}>{showLeftPanel?'Hide left panels':'Show left panels'}</button>
       <button className="toolbar-button" type="button" onClick={()=>setShowRightPanel(v=>!v)}>{showRightPanel?'Hide right panel':'Show right panel'}</button>
-      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void exportPdf(true)}>💾 Save</button>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void exportPdf(false)}>💾 Save / Download</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
       <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
       
