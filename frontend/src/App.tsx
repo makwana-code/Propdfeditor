@@ -518,10 +518,11 @@ export default function App() {
 
   useEffect(() => {
     if (!continuousView || !document) return;
+    const currentDocument = document;
     let cancelled = false;
     async function renderAllPages() {
       try {
-        const loading = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
+        const loading = pdfjs.getDocument({ data: new Uint8Array(currentDocument.bytes.slice(0)) });
         const pdf = await loading.promise;
         const allHits: PdfTextHit[] = [];
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
