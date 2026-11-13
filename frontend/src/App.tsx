@@ -629,7 +629,7 @@ export default function App() {
       // optional File System Access API / overwrite permission for Ctrl+S.
       if (command && event.key.toLowerCase() === 's') {
         event.preventDefault();
-        if (document && !busy) void exportPdf(false);
+        if (document && !busy) void confirmAndSavePdf();
         return;
       }
 
@@ -1155,6 +1155,18 @@ export default function App() {
     setStatus('Freehand stroke added.');
   }
 
+  async function confirmAndSavePdf() {
+    if (!document || busy) return;
+    const confirmed = window.confirm(
+      'Do you really want to save changes to "' + document.file.name + '"?\\n\\nOK = Save changes to the opened PDF file. Cancel = Keep editing.'
+    );
+    if (!confirmed) {
+      setStatus('Save cancelled. Your edits are still available.');
+      return;
+    }
+    await exportPdf(true);
+  }
+
   async function exportPdf(saveToFile = false) {
     if (!document) return;
     let saveHandle: any = saveToFile ? sourceFileHandleRef.current : null;
@@ -1509,9 +1521,9 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
       <button className="toolbar-button" type="button" onClick={()=>setShowLeftPanel(v=>!v)}>{showLeftPanel?'Hide left panels':'Show left panels'}</button>
       <button className="toolbar-button" type="button" onClick={()=>setShowRightPanel(v=>!v)}>{showRightPanel?'Hide right panel':'Show right panel'}</button>
-      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void exportPdf(false)}>💾 Save / Download</button>
+      <button className="toolbar-button" disabled={!document||busy} onClick={()=>void confirmAndSavePdf()}>💾 Save</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
-      <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf()}>{busy?'Preparing…':'⬇ Download'}</button>
+      <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf(false)}>{busy?'Preparing…':'⬇ Download'}</button>
       
     </nav>
 
