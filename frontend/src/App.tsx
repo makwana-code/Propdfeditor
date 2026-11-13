@@ -321,6 +321,7 @@ export default function App() {
   const commentMoveRef = useRef<{id:string;startX:number;startY:number;start:{x:number;y:number};pageWidth:number;pageHeight:number;cardWidth:number;cardHeight:number}|null>(null);
   const connectorMoveRef = useRef<{id:string;pageLeft:number;pageTop:number;pageWidth:number;pageHeight:number}|null>(null);
   const pageSizeRef = useRef({ width: 0, height: 0 });
+  const pageMetricsRef = useRef<Map<number, {width:number;height:number;scale:number}>>(new Map());
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
   useEffect(() => {
     if (!document) { setContinuousUrl(''); return; }
@@ -415,6 +416,7 @@ export default function App() {
         setFitZoom(Math.round(fit * 100));
         const viewport = pdfPage.getViewport({ scale: fit * zoom / 100 });
         pageSizeRef.current = { width: viewport.width, height: viewport.height };
+        pageMetricsRef.current.set(page, { width: viewport.width, height: viewport.height, scale: viewport.scale });
         const canvas = canvasRef.current;
         if (!canvas) return;
         const ctx = canvas.getContext('2d');
@@ -531,8 +533,10 @@ export default function App() {
           if (!canvas) continue;
           const pdfPage = await pdf.getPage(pageNumber);
           const base = pdfPage.getViewport({ scale: 1 });
-          const availableWidth = Math.min(900, Math.max(320, (stageRef.current?.clientWidth || 820) - 56));
-          const viewport = pdfPage.getViewport({ scale: availableWidth / base.width });
+          const availableWidth = Math.min(900, Math.max(300, (stageRef.current?.clientWidth || 760) - 40));
+          const fitScale = availableWidth / base.width;
+          const viewport = pdfPage.getViewport({ scale: fitScale * zoom / 100 });
+          pageMetricsRef.current.set(pageNumber, { width: viewport.width, height: viewport.height, scale: viewport.scale });
           const dpr = Math.min(1.25, window.devicePixelRatio || 1);
           canvas.width = Math.round(viewport.width * dpr);
           canvas.height = Math.round(viewport.height * dpr);
@@ -558,14 +562,23 @@ export default function App() {
             allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale)});
           });
         }
-        if (!cancelled) setContinuousHits(allHits);
+        if (!cancelled) {
+          // Scanned pages still get selectable word targets when OCR has already been run.
+          const embeddedPages = new Set(allHits.map(hit => hit.page));
+          Object.entries(ocrWords).forEach(([pageKey, words]) => {
+            const pageNumber = Number(pageKey);
+            if (embeddedPages.has(pageNumber)) return;
+            words.forEach((word, index) => allHits.push({ id:'ocr-'+pageNumber+'-'+index, page:pageNumber, text:word.text, x:word.x, y:word.y, w:word.w, h:word.h, fontSize:Math.max(7, Math.min(24, word.h * (pageMetricsRef.current.get(pageNumber)?.height || 700) * .72 / Math.max(.01, pageMetricsRef.current.get(pageNumber)?.scale || 1))) }));
+          });
+          setContinuousHits(allHits);
+        }
       } catch (error) {
         if (!cancelled) setStatus(error instanceof Error ? error.message : 'Unable to render continuous PDF pages.');
       }
     }
     void renderAllPages();
     return () => { cancelled = true; };
-  }, [continuousView, document, zoom]);
+  }, [continuousView, document, zoom, ocrWords]);
 
   useEffect(() => {
     function onKey(event: KeyboardEvent) {
@@ -721,6 +734,8 @@ export default function App() {
       const parsed = await PDFDocument.load(bytes);
       setDocument({ file, bytes, pages: parsed.getPageCount() });
       setContinuousView(false);
+      pageMetricsRef.current.clear();
+      continuousCanvasRefs.current.clear();
       const loading = pdfjs.getDocument({data:new Uint8Array(bytes.slice(0))});
       const pdfView = await loading.promise;
       const outline = await pdfView.getOutline();
@@ -960,8 +975,12 @@ export default function App() {
       // Grow original-text replacement boxes as the user types so the new
       // string is not squeezed into the old PDF run's narrow width.
       if (a.coverOriginal && typeof patch.text === 'string') {
-        const pageWidth = canvasRef.current?.clientWidth || pageSizeRef.current.width || 1;
-        const fontPx = Math.max(6, a.size * fitZoom * zoom / 10000);
+        const targetCanvas = continuousView ? continuousCanvasRefs.current.get(a.page) : canvasRef.current;
+        const metrics = pageMetricsRef.current.get(a.page);
+        const pageWidth = targetCanvas?.clientWidth || metrics?.width || pageSizeRef.current.width || 1;
+        const pageHeight = targetCanvas?.clientHeight || metrics?.height || pageSizeRef.current.height || 1;
+        const pageScale = metrics?.scale || fitZoom * zoom / 10000;
+        const fontPx = Math.max(6, a.size * pageScale);
         const measureCanvas = window.document.createElement('canvas');
         const measure = measureCanvas.getContext('2d');
         const fontWeight = next.bold ? '700' : '400';
@@ -970,7 +989,7 @@ export default function App() {
         const estimatedPixels = Math.max(...patch.text.split('\n').map(line => measure?.measureText(line || ' ').width || line.length*fontPx*.56), fontPx);
         const estimatedWidth = (estimatedPixels + 8) / pageWidth;
         const lineCount = Math.max(1, patch.text.split('\n').length);
-        const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / (canvasRef.current?.clientHeight || pageSizeRef.current.height || 1);
+        const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / pageHeight;
         next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
         next.h = Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
       }
@@ -979,11 +998,13 @@ export default function App() {
   }
 
   function saveResizedBox(id: string, element: HTMLTextAreaElement) {
-    const canvas = canvasRef.current;
+    const annotation = annotations.find(item => item.id === id);
+    if (!annotation) return;
+    const canvas = continuousView ? (continuousCanvasRefs.current.get(annotation.page) || null) : canvasRef.current;
     if (!canvas) return;
     const rect = element.getBoundingClientRect();
     const pageRect = canvas.getBoundingClientRect();
-    const sourceText = annotations.find(item => item.id === id)?.coverOriginal;
+    const sourceText = annotation.coverOriginal;
     updateAnnotation(id, {
       w: Math.max(sourceText ? .012 : .08, Math.min(.95, rect.width / pageRect.width)),
       h: Math.max(sourceText ? .012 : .04, Math.min(.8, rect.height / pageRect.height))
@@ -1418,7 +1439,7 @@ export default function App() {
 
       <article className="studio-viewer">
         <div className="studio-scroll">
-          {document ? (continuousView && continuousUrl ? <div className="page-scroll continuous-pages" ref={stageRef}>{Array.from({length:document.pages},(_,idx)=>{const pageNo=idx+1;return <div key={pageNo} className="continuous-page-wrap"><div className="continuous-page-stage" data-page={pageNo} onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const rect=event.currentTarget.getBoundingClientRect();const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;setPage(pageNo);setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={event=>{if(contextMenu){setContextMenu(null);return;}if((event.target as HTMLElement).closest('.pdf-annotation,button,textarea,input'))return;const point=normalizedPoint(event);if(!point)return;if(tool==='text'){const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setPage(pageNo);setTool('edit');}else if(tool==='comment'){setPage(pageNo);addCommentAt(point,pageNo);}else if(tool==='edit'){const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x-.01&&point.x<=h.x+h.w+.01&&point.y>=h.y-.01&&point.y<=h.y+h.h+.01);if(hit){setPage(pageNo);editExistingText(hit);}}}}><canvas ref={node=>{if(node)continuousCanvasRefs.current.set(pageNo,node);else continuousCanvasRefs.current.delete(pageNo);}}/>{(tool==='edit'||tool==='select')&&continuousHits.filter(hit=>hit.page===pageNo&&!annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();setPage(pageNo);editExistingText(hit);}}/>)}{annotations.filter(a=>a.page===pageNo).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*fitZoom*zoom/10000)+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setPage(pageNo);setSelectedId(a.id);setTool('edit');}}><textarea value={a.text} readOnly={tool!=='edit'} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',boxSizing:'border-box',margin:0,padding:'1px 2px',border:selectedId===a.id?'1px solid #2878d0':'1px solid transparent',outline:'none',background:a.coverOriginal?(a.maskColor||'#fff'):'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/></div>)}{comments.filter(c=>c.page===pageNo).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties}><b>Comment {i+1} · Page {pageNo}</b><span>{c.text}</span></div>)}{contextMenu&&page===pageNo&&<div className="pdf-context-menu" style={{left:Math.max(8,contextMenu.x),top:Math.max(8,contextMenu.y)}} onClick={e=>e.stopPropagation()}>{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);setPage(pageNo);editExistingText(hit);}}>✎ Edit Text</button>}<button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setTool('edit');}}>T Add Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);addCommentAt(point,pageNo);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}</div></div>})}</div> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
+          {document ? (continuousView && continuousUrl ? <div className="page-scroll continuous-pages" ref={stageRef}>{Array.from({length:document.pages},(_,idx)=>{const pageNo=idx+1;return <div key={pageNo} className="continuous-page-wrap"><div className="continuous-page-stage" data-page={pageNo} onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const rect=event.currentTarget.getBoundingClientRect();const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;setPage(pageNo);setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={event=>{if(contextMenu){setContextMenu(null);return;}if((event.target as HTMLElement).closest('.pdf-annotation,button,textarea,input'))return;const point=normalizedPoint(event);if(!point)return;if(tool==='text'){const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setPage(pageNo);setTool('edit');}else if(tool==='comment'){setPage(pageNo);addCommentAt(point,pageNo);}else if(tool==='edit'){const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x-.01&&point.x<=h.x+h.w+.01&&point.y>=h.y-.01&&point.y<=h.y+h.h+.01);if(hit){setPage(pageNo);editExistingText(hit);}}}}><canvas ref={node=>{if(node)continuousCanvasRefs.current.set(pageNo,node);else continuousCanvasRefs.current.delete(pageNo);}}/>{(tool==='edit'||tool==='select')&&continuousHits.filter(hit=>hit.page===pageNo&&!annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();setPage(pageNo);editExistingText(hit);}}/>)}{annotations.filter(a=>a.page===pageNo).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*(pageMetricsRef.current.get(pageNo)?.scale||fitZoom*zoom/10000))+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setPage(pageNo);setSelectedId(a.id);setTool('edit');}}><textarea value={a.text} readOnly={tool!=='edit'} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',boxSizing:'border-box',margin:0,padding:'1px 2px',border:selectedId===a.id?'1px solid #2878d0':'1px solid transparent',outline:'none',background:a.coverOriginal?(a.maskColor||'#fff'):'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/></div>)}{comments.filter(c=>c.page===pageNo).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties}><b>Comment {i+1} · Page {pageNo}</b><span>{c.text}</span></div>)}{contextMenu&&page===pageNo&&<div className="pdf-context-menu" style={{left:Math.max(8,contextMenu.x),top:Math.max(8,contextMenu.y)}} onClick={e=>e.stopPropagation()}>{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);setPage(pageNo);editExistingText(hit);}}>✎ Edit Text</button>}<button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setTool('edit');}}>T Add Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);addCommentAt(point,pageNo);}}>▤ Add Comment</button><button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}</div></div>})}</div> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing}>
             <canvas ref={canvasRef}/>
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
             {whiteoutDraft && tool==='whiteout' && <div className="pdf-whiteout-draft" style={{position:'absolute',left:(whiteoutDraft.x*100)+'%',top:(whiteoutDraft.y*100)+'%',width:(whiteoutDraft.w*100)+'%',height:(whiteoutDraft.h*100)+'%',background:'#fff',border:'1px dashed #2878d0',pointerEvents:'none',zIndex:20}}/>}
