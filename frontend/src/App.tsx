@@ -276,7 +276,7 @@ export default function App() {
   const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
   const [fitZoom, setFitZoom] = useState(100);
-  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'|'whiteout'>('edit');
+  const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'|'erase'|'whiteout'>('edit');
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [comments, setComments] = useState<PdfComment[]>([]);
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
@@ -1112,10 +1112,10 @@ export default function App() {
       event.currentTarget.setPointerCapture(event.pointerId);
       return;
     }
-    if (tool !== 'draw' || (event.target as HTMLElement).closest('.pdf-annotation,.comment-note')) return;
+    if ((tool !== 'draw' && tool !== 'erase') || (event.target as HTMLElement).closest('.pdf-annotation,.comment-note')) return;
     const point = normalizedPoint(event); if (!point) return;
     event.preventDefault();
-    const stroke: DrawStroke = { id: crypto.randomUUID(), page, color: drawColor, width: drawWidth, points: [point] };
+    const stroke: DrawStroke = { id: crypto.randomUUID(), page, color: tool === 'erase' ? '#ffffff' : drawColor, width: tool === 'erase' ? Math.max(drawWidth, 8) : drawWidth, points: [point] };
     drawingBaseRef.current = lastSnapshotRef.current || { annotations, comments, strokes }; drawingRef.current = stroke; setStrokes(old => [...old, stroke]);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -1175,7 +1175,7 @@ export default function App() {
       // For Download, open the native save dialog immediately while the click
       // still has user activation. This avoids browsers blocking a delayed
       // download after the PDF has finished asynchronous processing.
-      if (!saveHandle && typeof picker === 'function') {
+      if (saveToFile && !saveHandle && typeof picker === 'function') {
         saveHandle = await picker({
           suggestedName: document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name : document.file.name + '.pdf',
           types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
@@ -1292,6 +1292,8 @@ export default function App() {
         for (let i=1;i<stroke.points.length;i++) {
           const a=stroke.points[i-1], b=stroke.points[i];
           target.drawLine({ start:{x:a.x*width,y:height-a.y*height}, end:{x:b.x*width,y:height-b.y*height}, thickness:stroke.width, color, opacity:1 });
+          target.drawCircle({ x:a.x*width, y:height-a.y*height, size:stroke.width/2, color, opacity:1 });
+          if (i===stroke.points.length-1) target.drawCircle({ x:b.x*width, y:height-b.y*height, size:stroke.width/2, color, opacity:1 });
         }
       }
       // Embed OCR text invisibly so scanned pages become searchable in exported PDFs.
@@ -1337,8 +1339,8 @@ export default function App() {
           color: rgb(0.42, 0.31, 0.13), maxWidth: cardWidth - 12, lineHeight: 10
         });
       }
-      const bytes = await pdf.save();
-      if (!bytes || bytes.byteLength < 8) {
+      const bytes = await pdf.save({ useObjectStreams: false });
+      if (!bytes || bytes.byteLength < 100 || String.fromCharCode(...bytes.slice(0,5)) !== '%PDF-') {
         throw new Error('PDF export returned an empty file. Your edits are still available; please try Download again.');
       }
       // Copy the exact byte range into a standalone ArrayBuffer. Passing the
@@ -1347,7 +1349,7 @@ export default function App() {
       const pdfBuffer = new ArrayBuffer(bytes.byteLength);
       new Uint8Array(pdfBuffer).set(bytes);
       const pdfBlob = new Blob([pdfBuffer], { type: 'application/pdf' });
-      if (pdfBlob.size !== bytes.byteLength || pdfBlob.size < 8) {
+      if (pdfBlob.size !== bytes.byteLength || pdfBlob.size < 100) {
         throw new Error('The generated PDF data is incomplete. Your edits are still available.');
       }
       const downloadName = document.file.name.toLowerCase().endsWith('.pdf')
@@ -1381,7 +1383,7 @@ export default function App() {
         anchor.click();
         anchor.remove();
         // Keep the object URL alive for the browser download manager.
-        window.setTimeout(() => URL.revokeObjectURL(url), 120000);
+        window.setTimeout(() => URL.revokeObjectURL(url), 600000);
       }
       // Make the committed PDF the new editor source; subsequent saves must not
       // replay edits against the original, unmodified bytes.
@@ -1528,12 +1530,13 @@ export default function App() {
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setCommentDraft('');setTool('comment');setStatus('Comment mode: click the exact position on the PDF page, then enter your note.');}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
-      <button className={tool==='whiteout'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('whiteout');setSelectedId(null);setStatus('Eraser: drag over the area you want to erase. The white cover is applied to the exported PDF.')}}>▱ Eraser</button>
+      <button className={tool==='whiteout'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('whiteout');setSelectedId(null);setStatus('Whiteout: drag to place a rectangular white cover over the selected area.')}}>▱ Whiteout</button>
+      <button className={tool==='erase'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('erase');setSelectedId(null);setStatus('Eraser: paint freely over the PDF with a white brush. Adjust brush size using the width control.')}}>⌫ Eraser Brush</button>
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
       <input className="toolbar-color" aria-label="Drawing colour" type="color" value={drawColor} onChange={e=>setDrawColor(e.target.value)}/>
-      <select className="toolbar-select" aria-label="Drawing width" value={drawWidth} onChange={e=>setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option></select>
+      <select className="toolbar-select" aria-label="Drawing width" value={drawWidth} onChange={e=>setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option><option value={8}>8 px</option><option value={12}>12 px</option><option value={16}>16 px</option><option value={24}>24 px</option><option value={32}>32 px</option></select>
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
       <span className="toolbar-divider"/>
