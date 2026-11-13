@@ -221,9 +221,20 @@ class handler(BaseHTTPRequestHandler):
                         "tiro" if any(term in source_font for term in ("times", "serif")) else "helv"
                     )
                     origin = (span or {}).get("origin")
-                    baseline_y = float(origin[1]) if origin and len(origin) > 1 else source_rect.y1 - max(1, font_size * 0.18)
+                    source_baseline_offset = source_rect.y1 - float(origin[1]) if origin and len(origin) > 1 else max(1, font_size * 0.18)
+                    box = edit.get("box") or {}
+                    page_rect = page.rect
+                    destination_visible = fitz.Rect(
+                        float(box.get("x0", edit["rect"]["x0"])) * page_rect.width,
+                        float(box.get("y0", edit["rect"]["y0"])) * page_rect.height,
+                        float(box.get("x1", edit["rect"]["x1"])) * page_rect.width,
+                        float(box.get("y1", edit["rect"]["y1"])) * page_rect.height,
+                    )
+                    destination = destination_visible * page.derotation_matrix if page.rotation else destination_visible
+                    destination &= page.cropbox
+                    baseline_y = destination.y1 - source_baseline_offset
                     inserted = page.insert_text(
-                        (source_rect.x0, baseline_y), replacement,
+                        (destination.x0, baseline_y), replacement,
                         fontname=font_name, fontsize=font_size,
                         color=color, overlay=True,
                     )
