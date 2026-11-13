@@ -210,3 +210,14 @@
 .page-order-controls{display:flex;flex-direction:column;gap:2px;}
 .page-order-controls button{width:22px;height:22px;padding:0;border:1px solid #dce4ef;border-radius:5px;background:#fff;color:#536985;font-size:12px;line-height:1;cursor:pointer;}
 .page-order-controls button:disabled{opacity:.3;cursor:not-allowed;}
+
+/* Editable continuous-scroll pages */
+.continuous-pages{display:flex!important;flex-direction:column;align-items:center!important;gap:22px;overflow:auto!important;padding:24px 18px 40px!important;}
+.continuous-page-wrap{width:100%;display:flex;justify-content:center;}
+.continuous-page-stage{position:relative;display:block;flex:none;margin:0 auto;background:#fff;box-shadow:0 2px 12px #17243b24;overflow:visible;}
+.continuous-page-stage>canvas{display:block;max-width:none;}
+.continuous-page-stage .pdf-annotation{position:absolute;z-index:7;box-sizing:border-box;}
+.continuous-page-stage .source-text-hit{position:absolute;}
+.continuous-page-stage .comment-note{position:absolute;}
+.continuous-page-stage .pdf-context-menu{position:absolute;z-index:50;}
+@media(max-width:720px){.continuous-pages{padding:12px 6px 24px!important;gap:12px}.continuous-page-stage{max-width:100%;}}
