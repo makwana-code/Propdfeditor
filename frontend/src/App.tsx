@@ -618,6 +618,15 @@ export default function App() {
   }, [continuousView, document, zoom, ocrWords]);
 
   useEffect(() => {
+    // Native non-passive listener prevents browser/page zoom reliably; only PDF zoom state changes.
+    const scrollElement = document ? window.document.querySelector('.studio-scroll') as HTMLElement | null : null;
+    const onPdfWheel = (event: WheelEvent) => {
+      if (!(event.ctrlKey || event.metaKey) || !scrollElement?.contains(event.target as Node)) return;
+      event.preventDefault();
+      event.stopPropagation();
+      setZoom(value => Math.max(25, Math.min(300, value + (event.deltaY < 0 ? 10 : -10))));
+    };
+    scrollElement?.addEventListener('wheel', onPdfWheel, { passive: false, capture: true });
     function onKey(event: KeyboardEvent) {
       const target = event.target as HTMLElement | null;
       const isTyping = !!target && (
@@ -654,9 +663,9 @@ export default function App() {
 
       // Delete removes the currently selected editor object, not characters
       // from a text field. Original PDF text edits are represented as objects.
-      if (selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && (!isTyping || event.altKey)) {
+      if (selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
         event.preventDefault();
-        const step = event.shiftKey ? 0.01 : 0.002;
+        const step = event.shiftKey ? 0.01 : 0.004;
         const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
         const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
         setAnnotations(old => old.map(item => item.id === selectedId ? {...item,x:Math.max(0,Math.min(1-item.w,item.x+dx)),y:Math.max(0,Math.min(1-item.h,item.y+dy))} : item));
@@ -676,7 +685,10 @@ export default function App() {
       if (command && event.key === '-') setZoom(z => Math.max(25, z - 10));
     }
     window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
+    return () => {
+      window.removeEventListener('keydown', onKey);
+      scrollElement?.removeEventListener('wheel', onPdfWheel, true);
+    };
   }, [selectedId, document, busy, annotations, comments, strokes, ocrWords]);
 
   useEffect(() => {
@@ -1205,12 +1217,12 @@ export default function App() {
       // For Download, open the native save dialog immediately while the click
       // still has user activation. This avoids browsers blocking a delayed
       // download after the PDF has finished asynchronous processing.
-      if (saveToFile && !saveHandle && typeof picker === 'function') {
+      if (!saveHandle && typeof picker === 'function') {
         saveHandle = await picker({
           suggestedName: document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name : document.file.name + '.pdf',
           types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
         });
-        if (saveToFile) sourceFileHandleRef.current = saveHandle;
+        // Download/Save As always writes a new output file, never overwrites the source handle.
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') {
@@ -1416,23 +1428,25 @@ export default function App() {
         anchor.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
         anchor.remove();
         // Keep URL available for a manual retry if the browser blocks automatic download.
-        window.setTimeout(() => { setDownloadFallback(current=>current?.url===url?null:current); URL.revokeObjectURL(url); }, 30*60*1000);
+        // Keep the retry URL alive until the user starts the manual download.
       }
       // Make the committed PDF the new editor source; subsequent saves must not
       // replay edits against the original, unmodified bytes.
       const committedBytes = pdfBuffer.slice(0);
       const committedFile = new File([pdfBlob], document.file.name, { type: 'application/pdf' });
       setDocument({ file: committedFile, bytes: committedBytes, pages: pdf.getPageCount() });
-      setAnnotations([]);
-      setEditingTextId(null);
-      setComments([]);
-      setStrokes([]);
-      setOcrWords({});
-      setOcrPages({});
-      setSelectedId(null);
+      if (savedToFile || downloadFallback || !saveHandle) {
+        setAnnotations([]);
+        setEditingTextId(null);
+        setComments([]);
+        setStrokes([]);
+        setOcrWords({});
+        setOcrPages({});
+        setSelectedId(null);
+      }
       setStatus(savedToFile
-        ? (saveToFile ? 'Saved changes to the selected PDF file.' : 'Updated PDF downloaded successfully. The editor is now using the saved version.')
-        : 'Updated PDF download started successfully. File size: ' + Math.round(pdfBlob.size / 1024) + ' KB. The editor is now using the saved version.');
+        ? 'Edited PDF saved successfully as ' + downloadName + ' (' + Math.round(pdfBlob.size / 1024) + ' KB).'
+        : 'PDF is ready (' + Math.round(pdfBlob.size / 1024) + ' KB). If automatic download was blocked, use the Download ready link in the status bar.');
 
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
@@ -1594,17 +1608,16 @@ export default function App() {
       
     </nav>
 
-    <section className="studio-workspace" style={{gridTemplateColumns:`${showLeftPanel?'82px 112px ':''}minmax(0,1fr)${showRightPanel?' 355px':''}`}} onWheelCapture={event=>{if(event.ctrlKey||event.metaKey)event.preventDefault();}}>
+    <section className="studio-workspace" style={{gridTemplateColumns:`${showLeftPanel?'82px 112px ':''}minmax(0,1fr)${showRightPanel?' 355px':''}`}} onWheelCapture={event=>{if(event.ctrlKey||event.metaKey){event.preventDefault();event.stopPropagation();}}}>
       {showLeftPanel && <>
       <aside className="studio-pages">
-        <div className="panel-heading-control"><b>Navigation</b><button className="panel-inline-toggle" type="button" title="Hide left panel" aria-label="Hide left panel" onClick={()=>setShowLeftPanel(false)}>◧</button></div>
         <button className={activePanel==='pages'?'side-tab active':'side-tab'} type="button" onClick={()=>setActivePanel('pages')}>▣<span>Pages</span></button>
         <button className={activePanel==='bookmarks'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('bookmarks')}>▤<span>Bookmarks</span></button>
         <button className={activePanel==='outline'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('outline')}>☷<span>Outline</span></button>
         <button className={activePanel==='search'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('search')}>⌕<span>Search</span></button>
       </aside>
 
-      <aside className="studio-thumbnails" aria-label="PDF navigation panel">
+      <aside className="studio-thumbnails" aria-label="PDF navigation panel"><div className="panel-heading-control"><b>Navigation</b><button className="panel-inline-toggle" type="button" title="Hide left panel" aria-label="Hide left panel" onClick={()=>setShowLeftPanel(false)}>◧</button></div>
         {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><div key={index+1} className="page-mini-wrap" draggable={!busy} onDragStart={event=>{pageDragRef.current=index+1;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',String(index+1));}} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move';}} onDrop={event=>{event.preventDefault();const from=pageDragRef.current||Number(event.dataTransfer.getData('text/plain'));pageDragRef.current=null;if(from>0&&from!==index+1)void movePageOrder(from,index+1);}} onDragEnd={()=>{pageDragRef.current=null;}} title="Drag this page to a new position"><button className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button><div className="page-order-controls"><button type="button" title="Move page up" aria-label={'Move page '+(index+1)+' up'} disabled={busy||index===0} onClick={()=>void movePageOrder(index+1,index)}>↑</button><button type="button" title="Move page down" aria-label={'Move page '+(index+1)+' down'} disabled={busy||index===document.pages-1} onClick={()=>void movePageOrder(index+1,index+2)}>↓</button></div></div>)}<small>{document.pages} page(s) · Drag pages to reorder, or use ↑ ↓</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
         {activePanel==='bookmarks' && <div className="nav-results"><b>Bookmarks</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>No PDF bookmarks found in this file.</p>}</div>}
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
@@ -1614,7 +1627,7 @@ export default function App() {
 
       {!showLeftPanel&&<button className="panel-restore left" type="button" title="Show left panel" aria-label="Show left panel" onClick={()=>setShowLeftPanel(true)}>▤</button>}
       <article className="studio-viewer">
-        <div className="studio-scroll" onWheel={event=>{if(event.ctrlKey||event.metaKey){event.preventDefault();setZoom(value=>Math.max(25,Math.min(300,value+(event.deltaY<0?10:-10))));}}}>
+        <div className="studio-scroll" onWheelCapture={event=>{if(event.ctrlKey||event.metaKey){event.preventDefault();event.stopPropagation();setZoom(value=>Math.max(25,Math.min(300,value+(event.deltaY<0?10:-10))));}}}>
           {document ? (continuousView && continuousUrl ? <div className="page-scroll continuous-pages" ref={stageRef}>{Array.from({length:document.pages},(_,idx)=>{const pageNo=idx+1;return <div key={pageNo} className="continuous-page-wrap"><div className="continuous-page-stage" data-page={pageNo} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={finishDrawing} onPointerCancel={finishDrawing} onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const rect=event.currentTarget.getBoundingClientRect();const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;setPage(pageNo);setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={event=>{if(contextMenu){setContextMenu(null);return;}if((event.target as HTMLElement).closest('.pdf-annotation,button,textarea,input'))return;const point=normalizedPoint(event);if(!point)return;if(tool==='text'){const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setPage(pageNo);setTool('edit');}else if(tool==='comment'){setPage(pageNo);addCommentAt(point,pageNo);}else if(tool==='edit'){const hit=continuousHits.find(h=>h.page===pageNo&&point.x>=h.x-.01&&point.x<=h.x+h.w+.01&&point.y>=h.y-.01&&point.y<=h.y+h.h+.01);if(hit){setPage(pageNo);editExistingText(hit);}}}}><canvas ref={node=>{if(node)continuousCanvasRefs.current.set(pageNo,node);else continuousCanvasRefs.current.delete(pageNo);}}/><svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===pageNo).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>{searchHighlights.filter(hit=>hit.page===pageNo).map(hit=><div key={hit.id} className="pdf-search-highlight" style={{position:'absolute',left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%',background:'rgba(255,220,0,.48)',outline:'1px solid rgba(220,150,0,.9)',pointerEvents:'none',zIndex:8}}/>)}{(tool==='edit'||tool==='select')&&continuousHits.filter(hit=>hit.page===pageNo&&!annotations.some(a=>a.sourceHitId===hit.id)).map(hit=><button key={hit.id} type="button" className="source-text-hit" style={{left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(Math.max(hit.w,.012)*100)+'%',height:(Math.max(hit.h,.018)*100)+'%'}} title={'Click to edit: '+hit.text} onClick={e=>{e.stopPropagation();setPage(pageNo);editExistingText(hit);}}/>)}{annotations.filter(a=>a.page===pageNo&&a.coverOriginal&&a.sourceRect).map(a=><div key={a.id+'-source-mask'} className="source-original-mask" style={{left:(a.sourceRect!.x0*100)+'%',top:(a.sourceRect!.y0*100)+'%',width:((a.sourceRect!.x1-a.sourceRect!.x0)*100)+'%',height:((a.sourceRect!.y1-a.sourceRect!.y0)*100)+'%',background:a.maskColor||'#fff'}}/>)}{annotations.filter(a=>a.page===pageNo).map(a=><div key={a.id} data-annotation-id={a.id} className={'pdf-annotation '+(selectedId===a.id?'selected':'')+(a.coverOriginal?' source-text-edit':'')} style={{left:(a.x*100)+'%',top:(a.y*100)+'%',width:(a.w*100)+'%',height:(a.h*100)+'%',fontFamily:a.font,fontSize:(a.size*(pageMetricsRef.current.get(pageNo)?.scale||fitZoom*zoom/10000))+'px',color:a.color,fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left','--source-mask-color':a.maskColor||'#ffffff'} as React.CSSProperties} onClick={e=>{e.stopPropagation();setPage(pageNo);setSelectedId(a.id);setEditingTextId(a.id);setTool('edit');}}>{editingTextId===a.id && <div className="annotation-drag-strip" role="button" aria-label="Drag text box to move" title="Drag here to move this text box" onPointerDown={event=>beginMove(event,a)}/>}{editingTextId===a.id ? <textarea value={a.text} readOnly={tool!=='edit'} onChange={e=>updateAnnotation(a.id,{text:e.target.value})} onPointerDown={e=>{if(tool!=='edit'&&e.button===0)beginMove(e,a)}} onPointerUp={e=>saveResizedBox(a.id,e.currentTarget)} onFocus={e=>{if(a.coverOriginal)e.currentTarget.select();}} onBlur={e=>saveResizedBox(a.id,e.currentTarget)} aria-label="Editable PDF text box" style={{display:'block',width:'100%',height:'100%',boxSizing:'border-box',margin:0,padding:'1px 2px',border:selectedId===a.id?'1px solid #2878d0':'1px solid transparent',outline:'none',background:a.coverOriginal?'transparent':'rgba(255,255,255,.94)',color:a.color,fontFamily:a.font,fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left',lineHeight:1.05,resize:'both',overflow:'auto',whiteSpace:'pre-wrap'}}/> : <div className="committed-text" style={{width:'100%',height:'100%',whiteSpace:'pre-wrap',overflow:'hidden',background:'transparent',color:a.color,font:'inherit',fontSize:'inherit',fontWeight:a.bold?'700':'400',fontStyle:a.italic?'italic':'normal',textDecoration:a.underline?'underline':'none',textAlign:a.align||'left'}}>{a.text}</div>}{editingTextId===a.id && (['n','s','e','w','ne','nw','se','sw'] as const).map(edge=><button key={edge} type="button" aria-label={'Resize text box '+edge} className={'resize-handle resize-'+edge} onPointerDown={event=>beginResize(event,a,edge)}/>)}{editingTextId===a.id && <button type="button" className="text-edit-done" onClick={e=>{e.stopPropagation();setEditingTextId(null);setSelectedId(null);setStatus('Text edit applied on the page. Download or Save to commit it into the PDF.');}}>Done</button>}{editingTextId===a.id && <span className="resize-label">Drag to resize</span>}</div>)}{comments.filter(c=>c.page===pageNo).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties}><b>Comment {i+1} · Page {pageNo}</b><span>{c.text}</span></div>)}{contextMenu&&page===pageNo&&<div className="pdf-context-menu" style={{left:Math.max(8,contextMenu.x),top:Math.max(8,contextMenu.y)}} onClick={e=>e.stopPropagation()}>{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);setPage(pageNo);editExistingText(hit);}}>✎ Edit Text</button>}<button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);const id=crypto.randomUUID();setAnnotations(old=>[...old,{id,page:pageNo,text:'Type here',x:point.x,y:point.y,w:.34,h:.12,font,size:fontSize,color:fontColor,styleId:activeStyle.id,bold:activeStyle.bold,italic:activeStyle.italic,underline:activeStyle.underline,align:activeStyle.align}]);setSelectedId(id);setEditingTextId(id);setTool('edit');}}>T Add Text</button><button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);setPage(pageNo);addCommentAt(point,pageNo);}}>▤ Add Comment</button>{contextMenu.annotation&&<button type="button" onClick={()=>{const id=contextMenu.annotation!.id;setAnnotations(old=>old.filter(item=>item.id!==id));setSelectedId(null);setEditingTextId(null);setContextMenu(null);setStatus('Text box deleted.');}}>⌫ Delete Text</button>}{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);markNativeTextDeleted(hit);}}>⌫ Delete Original Text</button>}<button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}</div></div>})}</div> : <div className="page-scroll" ref={stageRef}><div className="pdf-page-stage" onContextMenu={event=>{event.preventDefault();const point=normalizedPoint(event);if(!point)return;const target=event.target as HTMLElement;const annotationEl=target.closest('.pdf-annotation') as HTMLElement|null;const annotation=annotationEl?annotations.find(a=>a.id===annotationEl.getAttribute('data-annotation-id'))||null:null;const hit=textHits.find(h=>h.page===page&&point.x>=h.x&&point.x<=h.x+h.w&&point.y>=h.y&&point.y<=h.y+h.h)||null;const rect=event.currentTarget.getBoundingClientRect();setContextMenu({x:event.clientX-rect.left,y:event.clientY-rect.top,hit,annotation,point});}} onClick={handleStageClick} onPointerDown={beginDrawing} onPointerMove={continueDrawing} onPointerUp={()=>finishDrawing()} onPointerCancel={()=>finishDrawing()}>
             <canvas ref={canvasRef}/>{searchHighlights.filter(hit=>hit.page===page).map(hit=><div key={hit.id} className="pdf-search-highlight" style={{position:'absolute',left:(hit.x*100)+'%',top:(hit.y*100)+'%',width:(hit.w*100)+'%',height:(hit.h*100)+'%',background:'rgba(255,220,0,.48)',outline:'1px solid rgba(220,150,0,.9)',pointerEvents:'none',zIndex:8}}/>)}
             <svg className="freehand-layer" viewBox="0 0 1000 1000" preserveAspectRatio="none" aria-label="Freehand drawing overlay" style={{position:'absolute',inset:0,width:'100%',height:'100%',pointerEvents:'none',overflow:'visible'}}>{strokes.filter(stroke=>stroke.page===page).map(stroke=><polyline key={stroke.id} points={stroke.points.map(p=>(p.x*1000)+','+(p.y*1000)).join(' ')} fill="none" stroke={stroke.color} strokeWidth={stroke.width*1.6} strokeLinecap="round" strokeLinejoin="round" vectorEffect="non-scaling-stroke"/>)}</svg>
@@ -1658,7 +1671,7 @@ export default function App() {
         </div>
       </aside>}
     </section>
-    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.download-retry-link{font-size:11px;color:#2563eb;text-decoration:underline;white-space:nowrap}.panel-restore{position:absolute;z-index:20;top:50%;transform:translateY(-50%);width:26px;height:44px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:2px;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
+    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.download-retry-link{font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:5px 9px;text-decoration:none;white-space:nowrap}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
