@@ -1211,9 +1211,28 @@ export default function App() {
     await exportPdf(true);
   }
 
-  async function exportPdf(saveToFile = false) {
+  function startPdfDownload() {
+    if (!document || busy) return;
+    const picker = (window as any).showSaveFilePicker;
+    if (typeof picker === 'function') {
+      // Open the native picker directly inside the button click, before async PDF work.
+      const suggestedName = document.file.name.toLowerCase().endsWith('.pdf')
+        ? document.file.name.replace(/\.pdf$/i, '-edited.pdf')
+        : document.file.name + '-edited.pdf';
+      void picker({ suggestedName, types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }] })
+        .then((handle: any) => exportPdf(false, handle))
+        .catch((error: any) => {
+          if (error instanceof DOMException && error.name === 'AbortError') setStatus('Download cancelled. Your edits are still available.');
+          else setStatus('Could not open download location: ' + (error instanceof Error ? error.message : 'Unknown browser error'));
+        });
+      return;
+    }
+    void exportPdf(false);
+  }
+
+  async function exportPdf(saveToFile = false, downloadHandle: any = null) {
     if (!document) return;
-    let saveHandle: any = saveToFile ? sourceFileHandleRef.current : null;
+    let saveHandle: any = downloadHandle || (saveToFile ? sourceFileHandleRef.current : null);
     try {
       const picker = (window as any).showSaveFilePicker;
       // For Download, open the native save dialog immediately while the click
@@ -1221,7 +1240,7 @@ export default function App() {
       // download after the PDF has finished asynchronous processing.
       if (saveToFile && !saveHandle && typeof picker === 'function') {
         saveHandle = await picker({
-          suggestedName: document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name : document.file.name + '.pdf',
+          suggestedName: document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name.replace(/\.pdf$/i, '-edited.pdf') : document.file.name + '-edited.pdf',
           types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
         });
         // Download/Save As always writes a new output file, never overwrites the source handle.
@@ -1431,7 +1450,8 @@ export default function App() {
         anchor.style.position = 'fixed';
         anchor.style.left = '-10000px';
         window.document.body.appendChild(anchor);
-        anchor.click();
+        // Delayed synthetic clicks are blocked by Chromium after async PDF generation.
+        // Keep this real anchor for the user's explicit click in the status bar.
         anchor.remove();
         // Keep URL available for a manual retry if the browser blocks automatic download.
         // Keep the retry URL alive until the user starts the manual download.
@@ -1452,7 +1472,7 @@ export default function App() {
       }
       setStatus(savedToFile
         ? 'Edited PDF saved successfully as ' + downloadName + ' (' + Math.round(pdfBlob.size / 1024) + ' KB).'
-        : 'PDF generated and verified: ' + downloadName + ' · ' + pdfBlob.size.toLocaleString() + ' bytes. If automatic download is blocked, use Download ready in the status bar.');
+        : 'PDF ready: ' + downloadName + ' (' + pdfBlob.size.toLocaleString() + ' bytes). Click Download ready to save it.');
 
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
@@ -1610,7 +1630,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!document} onClick={()=>setZoom(z=>Math.min(300,z+10))}>＋</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void confirmAndSavePdf()}>💾 Save</button>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void saveToCloud()}>☁ Save to cloud</button>
-      <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={()=>void exportPdf(false)}>{busy?'Preparing…':'⬇ Download'}</button>
+      <button className="toolbar-button primary-toolbar" disabled={!document||busy} onClick={startPdfDownload}>{busy?'Preparing…':'⬇ Download'}</button>
       
     </nav>
 
@@ -1654,7 +1674,7 @@ export default function App() {
             <span>or drop a file here</span>
           </div>}
         </div>
-        <div className="studio-statusbar"><span>{document?'Page '+page+' of '+document.pages:status}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Downloading '+downloadFallback.name+'…')}>Download ready · {downloadFallback.name}</a>}<div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
+        <div className="studio-statusbar"><span>{status || (document?'Page '+page+' of '+document.pages:'Ready')}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Browser download requested for '+downloadFallback.name+'.')}>⬇ Download ready · {downloadFallback.name}</a>}<div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
 
       {!showRightPanel&&<button className="panel-restore right" type="button" title="Show right panel" aria-label="Show right panel" onClick={()=>setShowRightPanel(true)}>▤</button>}
@@ -1677,7 +1697,7 @@ export default function App() {
         </div>
       </aside>}
     </section>
-    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.toolbar-zoom-control{display:inline-flex;align-items:center;gap:2px;border:1px solid #cbd5e1;border-radius:6px;padding:0 5px;height:34px;background:#fff;color:#334155}.toolbar-zoom-input{width:48px;border:0;outline:0;text-align:center;font:inherit;font-size:13px;color:inherit;background:transparent;padding:0}.toolbar-zoom-input::-webkit-inner-spin-button,.toolbar-zoom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.download-retry-link{font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:5px 9px;text-decoration:none;white-space:nowrap}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
+    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}.toolbar-zoom-control{display:inline-flex;align-items:center;gap:2px;border:1px solid #cbd5e1;border-radius:6px;padding:0 5px;height:34px;background:#fff;color:#334155}.toolbar-zoom-input{width:48px;border:0;outline:0;text-align:center;font:inherit;font-size:13px;color:inherit;background:transparent;padding:0}.toolbar-zoom-input::-webkit-inner-spin-button,.toolbar-zoom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.download-retry-link{display:inline-flex;align-items:center;font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:6px 10px;text-decoration:none;white-space:nowrap;cursor:pointer;position:relative;z-index:100}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
