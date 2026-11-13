@@ -529,8 +529,15 @@ export default function App() {
         const allHits: PdfTextHit[] = [];
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
           if (cancelled) return;
-          const canvas = continuousCanvasRefs.current.get(pageNumber);
-          if (!canvas) continue;
+          // React may still be attaching refs for a long document when this
+          // effect starts. Wait for each page canvas instead of silently skipping it.
+          let canvas = continuousCanvasRefs.current.get(pageNumber);
+          for (let attempt = 0; !canvas && attempt < 30 && !cancelled; attempt++) {
+            await new Promise<void>(resolve => requestAnimationFrame(() => resolve()));
+            canvas = continuousCanvasRefs.current.get(pageNumber);
+          }
+          if (cancelled) return;
+          if (!canvas) throw new Error('Continuous Scroll could not initialize page ' + pageNumber + ' of ' + pdf.numPages + '. Please switch Continuous Scroll off and on, then retry.');
           const pdfPage = await pdf.getPage(pageNumber);
           const base = pdfPage.getViewport({ scale: 1 });
           const availableWidth = Math.min(900, Math.max(300, (stageRef.current?.clientWidth || 760) - 40));
@@ -838,14 +845,12 @@ export default function App() {
     }
     const id = crypto.randomUUID();
     const style = TEXT_STYLES.find(item=>item.id==='body') || TEXT_STYLES[6];
-    // PDF.js gives the baseline-based text bounds. Expand slightly upward/downward
-    // so the opaque replacement layer fully covers glyph ascenders and descenders.
-    const padX = Math.max(.00025, Math.min(.001, hit.h * .035));
-    const padY = Math.max(.0003, Math.min(.001, hit.h * .04));
-    const boxX = Math.max(0, hit.x - padX);
-    const boxY = Math.max(0, hit.y - padY);
-    const boxW = Math.min(1 - boxX, Math.max(.012, hit.w + padX * 2));
-    const boxH = Math.min(1 - boxY, Math.max(.012, hit.h + padY * 2));
+    // Edit in-place: anchor the replacement textarea to the exact original
+    // PDF text run bounds. Do not create a separate, offset text box.
+    const boxX = Math.max(0, hit.x);
+    const boxY = Math.max(0, hit.y);
+    const boxW = Math.min(1 - boxX, Math.max(.004, hit.w));
+    const boxH = Math.min(1 - boxY, Math.max(.012, hit.h));
     // Estimate the cell/page background and original glyph colour from rendered pixels.
     const appearance = sampleTextAppearance(hit);
     const maskColor = appearance.maskColor;
