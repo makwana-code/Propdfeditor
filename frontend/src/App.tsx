@@ -1172,16 +1172,22 @@ export default function App() {
     let saveHandle: any = saveToFile ? sourceFileHandleRef.current : null;
     try {
       const picker = (window as any).showSaveFilePicker;
-      if (saveToFile && !saveHandle && typeof picker === 'function') {
+      // For Download, open the native save dialog immediately while the click
+      // still has user activation. This avoids browsers blocking a delayed
+      // download after the PDF has finished asynchronous processing.
+      if (!saveHandle && typeof picker === 'function') {
         saveHandle = await picker({
-          suggestedName: document.file.name,
+          suggestedName: document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name : document.file.name + '.pdf',
           types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
         });
-        sourceFileHandleRef.current = saveHandle;
+        if (saveToFile) sourceFileHandleRef.current = saveHandle;
       }
     } catch (error) {
-      if (error instanceof DOMException && error.name === 'AbortError') return;
-      setStatus(error instanceof Error ? error.message : 'Could not open Save dialog.');
+      if (error instanceof DOMException && error.name === 'AbortError') {
+        setStatus('Download cancelled. Your edits are still available.');
+        return;
+      }
+      setStatus(error instanceof Error ? 'Could not open the PDF save dialog: ' + error.message : 'Could not open Save dialog.');
       return;
     }
     setBusy(true);
@@ -1342,11 +1348,15 @@ export default function App() {
         const anchor = window.document.createElement('a');
         anchor.href = url;
         anchor.download = document.file.name.toLowerCase().endsWith('.pdf') ? document.file.name : document.file.name + '.pdf';
-        anchor.style.display = 'none';
+        anchor.rel = 'noopener';
+        anchor.style.position = 'fixed';
+        anchor.style.left = '-10000px';
         window.document.body.appendChild(anchor);
         anchor.click();
         anchor.remove();
-        window.setTimeout(() => URL.revokeObjectURL(url), 60000);
+        // Keep the object URL alive long enough for the browser download
+        // manager to consume the generated PDF.
+        window.setTimeout(() => URL.revokeObjectURL(url), 120000);
       }
       // Make the committed PDF the new editor source; subsequent saves must not
       // replay edits against the original, unmodified bytes.
@@ -1361,10 +1371,10 @@ export default function App() {
       setOcrPages({});
       setSelectedId(null);
       setStatus(saveHandle
-        ? 'Saved changes to the currently opened PDF file.'
+        ? (saveToFile ? 'Saved changes to the currently opened PDF file.' : 'Updated PDF saved successfully. The editor is now using the saved version.')
         : (saveToFile
           ? 'This browser cannot overwrite the opened file. The updated PDF was downloaded with the original filename.'
-          : 'Updated PDF downloaded. The editor is now using the saved version.'));
+          : 'Updated PDF download started. The editor is now using the saved version.'));
 
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
@@ -1495,7 +1505,7 @@ export default function App() {
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setCommentDraft('');setTool('comment');setStatus('Comment mode: click the exact position on the PDF page, then enter your note.');}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
       <button className={tool==='draw'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('draw');setStatus('Draw freehand on the PDF page. Drawing is included in the downloaded PDF.')}}>✎ Draw</button>
-      <button className={tool==='whiteout'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('whiteout');setSelectedId(null);setStatus('Whiteout: drag over any area of the PDF to cover it with a white rectangle.')}}>▰ Whiteout</button>
+      <button className={tool==='whiteout'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setTool('whiteout');setSelectedId(null);setStatus('Eraser: drag over the area you want to erase. The white cover is applied to the exported PDF.')}}>▱ Eraser</button>
       <button className={continuousView?'toolbar-button active':'toolbar-button'} disabled={!document||!continuousUrl} onClick={()=>{setContinuousView(v=>!v);setStatus(continuousView?'Returned to editing canvas.':'Continuous PDF view: scroll through every page; switch back to edit.')}}>▤ {continuousView?'Edit current page':'Continuous scroll'}</button>
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
