@@ -268,6 +268,8 @@ type ResizeSession = { id: string; edge: string; startX: number; startY: number;
 
 export default function App() {
   const [document, setDocument] = useState<PdfDocument | null>(null);
+  const sourceFileHandleRef = useRef<any>(null);
+  const documentInputRef = useRef<HTMLInputElement>(null);
   const [cloudUser, setCloudUser] = useState<{id:string;email?:string}|null>(null);
   const [page, setPage] = useState(1);
   const [continuousView, setContinuousView] = useState(false);
@@ -397,8 +399,7 @@ export default function App() {
 
   useEffect(() => {
     let cancelled = false;
-    async function renderPage() {
-      if (!document) return;
+    async function renderPage() {      if (!document) return;
       try {
         const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
         const pdf = await task.promise;
@@ -643,8 +644,22 @@ export default function App() {
     setSelectedId(annotation.id);
   }
 
-  async function openPdf(file?: File) {
+  async function openPdfFromPicker() {
+    const picker = (window as any).showOpenFilePicker;
+    if (typeof picker !== 'function') { documentInputRef.current?.click(); return; }
+    try {
+      const [handle] = await picker({ multiple: false, types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }] });
+      if (!handle) return;
+      await openPdf(await handle.getFile(), handle);
+    } catch (error) {
+      if (error instanceof DOMException && error.name === 'AbortError') return;
+      setStatus(error instanceof Error ? error.message : 'Could not open the selected PDF.');
+    }
+  }
+
+  async function openPdf(file?: File, fileHandle?: any) {
     if (!file) return;
+    if (fileHandle) sourceFileHandleRef.current = fileHandle;
     if (file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')) { setStatus('Please select a PDF file.'); return; }
     try {
       setStatus('Loading PDF…');
@@ -797,8 +812,7 @@ export default function App() {
   async function runOcr() {
     if (!document) { setStatus('Open a PDF before running OCR.'); return; }
     setBusy(true);
-    let worker: any = null;
-    try {
+    let worker: any = null;    try {
       const pdf = pdfRef.current || await (async () => {
         const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
         return await task.promise;
@@ -975,14 +989,15 @@ export default function App() {
 
   async function exportPdf(saveToFile = false) {
     if (!document) return;
-    let saveHandle: any = null;
+    let saveHandle: any = saveToFile ? sourceFileHandleRef.current : null;
     try {
       const picker = (window as any).showSaveFilePicker;
-      if (saveToFile && typeof picker === 'function') {
+      if (saveToFile && !saveHandle && typeof picker === 'function') {
         saveHandle = await picker({
-          suggestedName: 'edited-' + document.file.name.replace(/\\.pdf$/i, '') + '.pdf',
+          suggestedName: document.file.name,
           types: [{ description: 'PDF document', accept: { 'application/pdf': ['.pdf'] } }]
         });
+        sourceFileHandleRef.current = saveHandle;
       }
     } catch (error) {
       if (error instanceof DOMException && error.name === 'AbortError') return;
@@ -1142,16 +1157,31 @@ export default function App() {
         const writable = await saveHandle.createWritable();
         await writable.write(outputBlob);
         await writable.close();
-        setStatus('Saved PDF successfully to the selected location.');
       } else {
         const url = URL.createObjectURL(outputBlob);
         const anchor = window.document.createElement('a');
         anchor.href = url;
-        anchor.download = 'edited-' + document.file.name.replace(/\.pdf$/i, '') + '.pdf';
+        anchor.download = document.file.name;
         anchor.click();
         window.setTimeout(() => URL.revokeObjectURL(url), 1000);
-        setStatus(saveToFile ? 'Save dialog is not supported in this browser; the edited PDF was downloaded instead.' : (originalEdits.length ? 'Export complete. Original PDF text was redacted and replaced in the PDF content.' : 'Export complete.'));
       }
+      // Make the committed PDF the new editor source; subsequent saves must not
+      // replay edits against the original, unmodified bytes.
+      const committedBytes = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer;
+      const committedFile = new File([outputBlob], document.file.name, { type: 'application/pdf' });
+      setDocument({ file: committedFile, bytes: committedBytes, pages: pdf.getPageCount() });
+      setAnnotations([]);
+      setComments([]);
+      setStrokes([]);
+      setOcrWords({});
+      setOcrPages({});
+      setSelectedId(null);
+      setStatus(saveHandle
+        ? 'Saved changes to the currently opened PDF file.'
+        : (saveToFile
+          ? 'This browser cannot overwrite the opened file. The updated PDF was downloaded with the original filename.'
+          : 'Updated PDF downloaded. The editor is now using the saved version.'));
+
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
     } finally { setBusy(false); }
@@ -1197,8 +1227,7 @@ export default function App() {
     try {
       const pdf = await PDFDocument.load(document.bytes.slice(0)); pdf.removePage(page - 1); const bytes = await pdf.save();
       const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
-      setDocument({ file, bytes: new Uint8Array(bytes).buffer as ArrayBuffer, pages: pdf.getPageCount() });
-      setAnnotations(old => old.filter(a => a.page !== page).map(a => a.page > page ? { ...a, page: a.page - 1 } : a));
+      setDocument({ file, bytes: new Uint8Array(bytes).buffer as ArrayBuffer, pages: pdf.getPageCount() });      setAnnotations(old => old.filter(a => a.page !== page).map(a => a.page > page ? { ...a, page: a.page - 1 } : a));
       setComments(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
       setStrokes(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
       setOcrPages(old => Object.fromEntries(Object.entries(old).filter(([key]) => Number(key) !== page).map(([key, value]) => [String(Number(key) > page ? Number(key) - 1 : Number(key)), value])));
@@ -1277,7 +1306,7 @@ export default function App() {
     </header>
 
     <nav className="studio-toolbar" aria-label="PDF editing toolbar">
-      <label className="toolbar-button open-file"><input type="file" accept="application/pdf,.pdf" onChange={e=>void openPdf(e.target.files?.[0])}/>Open PDF</label>
+      <button className="toolbar-button open-file" type="button" onClick={()=>void openPdfFromPicker()}>Open PDF</button><input ref={documentInputRef} type="file" accept="application/pdf,.pdf" style={{display:'none'}} onChange={e=>{sourceFileHandleRef.current=null;void openPdf(e.target.files?.[0]);e.currentTarget.value='';}}/>
       <button className={tool==='edit'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('edit');setStatus('Edit Text mode: click original PDF text, then type to replace it.')}}>✎ Edit Text</button>
       <button className={tool==='comment'?'toolbar-button active':'toolbar-button'} disabled={!document} onClick={()=>{setCommentDraft('');setTool('comment');setStatus('Comment mode: click the exact position on the PDF page, then enter your note.');}}>▤ Comment</button>
       <button className={tool==='text'?'toolbar-button active':'toolbar-button'} onClick={()=>{setTool('text');setStatus('Click anywhere on the PDF page to add a new text box.')}}>T&nbsp; Add text</button>
