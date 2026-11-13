@@ -1453,7 +1453,7 @@ export default function App() {
         let writable: any = null;
         try {
           writable = await saveHandle.createWritable({ keepExistingData: false });
-          await writable.write({ type: 'write', position: 0, data: downloadBytes });
+          await writable.write(downloadBytes);
           await writable.truncate(downloadBytes.byteLength);
           await writable.close();
           writable = null;
