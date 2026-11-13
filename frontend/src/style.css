@@ -221,3 +221,19 @@
 .continuous-page-stage .comment-note{position:absolute;}
 .continuous-page-stage .pdf-context-menu{position:absolute;z-index:50;}
 @media(max-width:720px){.continuous-pages{padding:12px 6px 24px!important;gap:12px}.continuous-page-stage{max-width:100%;}}
+
+
+/* Navigation controls: reserve their width so the page input never collides with arrows. */
+.studio-toolbar .toolbar-page{display:inline-flex;align-items:center;justify-content:center;gap:5px;flex:0 0 auto;min-width:112px;width:112px;white-space:nowrap}
+.studio-toolbar .toolbar-page input{box-sizing:border-box;flex:0 0 38px;width:38px;min-width:38px;height:28px;padding:2px 3px;text-align:center;border:1px solid #cbd7e6;border-radius:5px;background:#fff;color:#29415f}
+.studio-toolbar>.toolbar-divider{flex:0 0 1px}
+.studio-toolbar>.toolbar-button{flex:0 0 auto}
+.studio-toolbar{gap:8px;padding-left:12px;padding-right:12px;}
+
+/* Use one scroll owner for Continuous Scroll. The outer viewer scrolls through
+   the full page stack; the page stack itself must not be a nested fixed-height scroller. */
+.studio-scroll{min-height:0;overflow:auto!important;overscroll-behavior:contain}
+.studio-scroll>.continuous-pages{height:auto!important;min-height:100%!important;max-height:none!important;overflow:visible!important;flex:none!important;align-items:center!important}
+.continuous-page-wrap{flex:0 0 auto;min-height:0}
+.continuous-page-stage{flex:0 0 auto}
+.continuous-page-stage>canvas{display:block;height:auto}
