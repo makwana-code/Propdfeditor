@@ -237,3 +237,9 @@
 .continuous-page-wrap{flex:0 0 auto;min-height:0}
 .continuous-page-stage{flex:0 0 auto}
 .continuous-page-stage>canvas{display:block;height:auto}
+
+
+/* Preserve the original glyph mask when the replacement text is moved. */
+.source-original-mask{position:absolute;z-index:6;pointer-events:none;box-sizing:border-box;}
+.pdf-annotation.source-text-edit{background:transparent!important;}
+.pdf-annotation.source-text-edit .committed-text{background:transparent!important;}
