@@ -283,6 +283,7 @@ export default function App() {
   const [drawColor, setDrawColor] = useState('#d62728');
   const [eraseBrushColor, setEraseBrushColor] = useState('#ffffff');
   const [searchHighlights, setSearchHighlights] = useState<PdfTextHit[]>([]);
+  const [downloadFallback, setDownloadFallback] = useState<{url:string;name:string}|null>(null);
   const [drawWidth, setDrawWidth] = useState(2.5);
   const drawingRef = useRef<DrawStroke | null>(null);
   const drawingBaseRef = useRef<EditorSnapshot | null>(null);
@@ -653,7 +654,7 @@ export default function App() {
 
       // Delete removes the currently selected editor object, not characters
       // from a text field. Original PDF text edits are represented as objects.
-      if (!isTyping && selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
+      if (selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && (!isTyping || event.altKey)) {
         event.preventDefault();
         const step = event.shiftKey ? 0.01 : 0.002;
         const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
@@ -1403,6 +1404,7 @@ export default function App() {
       }
       if (!savedToFile) {
         const url = URL.createObjectURL(pdfBlob);
+        setDownloadFallback({url,name:downloadName});
         const anchor = window.document.createElement('a');
         anchor.href = url;
         anchor.download = downloadName;
@@ -1411,10 +1413,10 @@ export default function App() {
         anchor.style.position = 'fixed';
         anchor.style.left = '-10000px';
         window.document.body.appendChild(anchor);
-        anchor.click();
+        anchor.dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true,view:window}));
         anchor.remove();
-        // Keep the object URL alive for the browser download manager.
-        window.setTimeout(() => URL.revokeObjectURL(url), 600000);
+        // Keep URL available for a manual retry if the browser blocks automatic download.
+        window.setTimeout(() => { setDownloadFallback(current=>current?.url===url?null:current); URL.revokeObjectURL(url); }, 30*60*1000);
       }
       // Make the committed PDF the new editor source; subsequent saves must not
       // replay edits against the original, unmodified bytes.
@@ -1632,7 +1634,7 @@ export default function App() {
             <span>or drop a file here</span>
           </div>}
         </div>
-        <div className="studio-statusbar"><span>{document?'Page '+page+' of '+document.pages:status}</span><div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
+        <div className="studio-statusbar"><span>{document?'Page '+page+' of '+document.pages:status}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Downloading '+downloadFallback.name+'…')}>Download not started? Click here</a>}<div><button disabled={!document} onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><b>{document?page:'–'}</b><button disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
 
       {showRightPanel && <aside className="studio-properties">
@@ -1654,7 +1656,7 @@ export default function App() {
         </div>
       </aside>}
     </section>
-    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}`}</style>
+    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.pdf-search-highlight{border-radius:2px}`.download-retry-link{font-size:11px;color:#2563eb;text-decoration:underline;white-space:nowrap}`}</style>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
