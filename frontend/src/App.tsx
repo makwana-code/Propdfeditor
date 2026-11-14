@@ -1132,7 +1132,7 @@ export default function App() {
       const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
-      setActivePanel('search');
+      setActivePanel('ocr');
       setStatus('OCR conversion complete. Text is searchable and each recognized line can be selected and edited; original scanned pages, dimensions and graphics remain as the visual background. Download to create the OCR-enabled PDF.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
