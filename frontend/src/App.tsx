@@ -1115,6 +1115,7 @@ export default function App() {
       });
       const extracted: Record<number,string> = {};
       const positionedWords: Record<number,OcrWord[]> = {};
+      const nativeTextPages = new Set<number>();
       setOcrProgress(0);
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         setStatus('High-resolution OCR: page ' + pageNumber + ' of ' + pdf.numPages + '…');
@@ -1125,8 +1126,9 @@ export default function App() {
         const nativeContent: any = await pdfPage.getTextContent();
         const nativeText = (nativeContent.items || []).map((item: any) => item.str || '').join(' ').trim();
         if (nativeText.replace(/\\s/g, '').length >= 12) {
-          setOcrProgress(Math.round(pageNumber / pdf.numPages * 100));
-          continue;
+          // OCR mixed-content pages too: native text remains the authoritative
+          // searchable layer, while OCR catches text embedded in page images.
+          nativeTextPages.add(pageNumber);
         }
         const baseViewport = pdfPage.getViewport({ scale: 1 });
         const safeScale = Math.min(ocrScale, 4200 / Math.max(baseViewport.width, baseViewport.height));
@@ -1219,6 +1221,9 @@ export default function App() {
       let rebuiltCount = 0;
       let preservedArtworkCount = 0;
       for (const [pageNumber, words] of Object.entries(positionedWords)) {
+        // Do not repaint pages that already have native PDF text: OCR words
+        // remain available for search/highlighting and editing hit targets.
+        if (nativeTextPages.has(Number(pageNumber))) continue;
         const target = editablePdf.getPage(Number(pageNumber) - 1);
         const { width, height } = target.getSize();
         const validWords = words.filter(word => word.text && word.w > 0 && word.h > 0);
