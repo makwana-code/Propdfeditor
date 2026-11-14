@@ -901,7 +901,7 @@ export default function App() {
       const entries:Array<{title:string;page:number}> = [];
       const visit = async (nodes:any[]) => { for (const node of nodes || []) { let target:any=node.dest; if (typeof target === 'string') target=await pdfView.getDestination(target); let targetPage=1; if (Array.isArray(target) && target[0]) { try { targetPage=(await pdfView.getPageIndex(target[0]))+1; } catch {} } entries.push({title:String(node.title||'Untitled bookmark'),page:targetPage}); if (node.items?.length) await visit(node.items); } };
       await visit(outline || []); setBookmarks(entries); setSearchResults([]); setTextHits([]);
-      setPage(1); setZoom(100); setActivePanel('pages'); setTool('edit'); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); setOcrWords({}); undoRef.current=[]; redoRef.current=[]; lastSnapshotRef.current=null; setSelectedId(null); setEditingTextId(null); setHistoryItems([]); copiedAnnotationRef.current=null;
+      setPage(1); setZoom(100); setActivePanel('pages'); setTool('edit'); setAnnotations([]); setComments([]); setStrokes([]); setOcrPages({}); setOcrWords({}); undoRef.current=[]; redoRef.current=[]; const cleanSnapshot: EditorSnapshot = {annotations:[],comments:[],strokes:[]}; lastSnapshotRef.current=cleanSnapshot; setSelectedId(null); setEditingTextId(null); setHistoryItems([{id:crypto.randomUUID(),label:'Document opened',createdAt:Date.now(),snapshot:cleanSnapshot}]); copiedAnnotationRef.current=null;
       setStatus(file.name + ' · ' + parsed.getPageCount() + ' pages. Edit Text is active: click any existing PDF text to change it.');
     } catch { setStatus('Could not open this PDF. It may be damaged or password protected.'); }
   }
