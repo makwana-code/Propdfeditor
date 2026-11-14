@@ -305,6 +305,7 @@ export default function App() {
   const [activeStyleId, setActiveStyleId] = useState('body');
   const [commentDraft, setCommentDraft] = useState('');
   const [contextMenu, setContextMenu] = useState<{x:number;y:number;hit:PdfTextHit|null;annotation:TextAnnotation|null;point:{x:number;y:number}}|null>(null);
+  const [pageContextMenu, setPageContextMenu] = useState<{x:number;y:number;page:number}|null>(null);
   const [mergeFiles, setMergeFiles] = useState<File[]>([]);
   const pageDragRef = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
@@ -1383,8 +1384,10 @@ export default function App() {
         const estimatedWidth = (estimatedPixels + 8) / pageWidth;
         const lineCount = Math.max(1, patch.text.split('\n').length);
         const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / pageHeight;
-        next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
-        next.h = Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
+        // Keep replacements of existing PDF text within the original run bounds.
+        // Export shrinks text to fit instead of crossing into adjacent table cells.
+        next.w = a.sourceRect ? a.w : Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
+        next.h = a.sourceRect ? a.h : Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
       }
       return next;
     }));
@@ -1593,14 +1596,12 @@ export default function App() {
             target.drawRectangle({x:x-0.35,y:height-top-annotation.h*height-0.35,width:annotation.w*width+0.7,height:annotation.h*height+0.7,color:maskRgb,borderWidth:0});
           }
         }
-        const size = annotation.size;
+        let size = annotation.size;
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
         const boxWidth = Math.max(1, annotation.w * width);
         const boxHeight = Math.max(1, annotation.h * height);
         const inset = Math.min(4, boxWidth / 20);
         const maxWidth = Math.max(1, boxWidth - inset * 2);
-        const lineHeight = size * 1.25;
-        const maxLines = Math.max(1, Math.floor(boxHeight / lineHeight));
         const wrapped: string[] = [];
         for (const paragraph of annotation.text.split('\n')) {
           if (!paragraph) { wrapped.push(''); continue; }
@@ -1623,7 +1624,11 @@ export default function App() {
           }
           if (current) wrapped.push(current);
         }
-        wrapped.slice(0, maxLines).forEach((line, index) => {
+        const widest = Math.max(1, ...wrapped.map(line => embedded.widthOfTextAtSize(line, size)));
+        const fitScale = Math.min(1, maxWidth / widest, boxHeight / Math.max(1, wrapped.length * size * 1.18));
+        size = Math.max(3, size * fitScale);
+        const lineHeight = size * 1.18;
+        wrapped.forEach((line, index) => {
           if (!line) return;
           const lineWidth = embedded.widthOfTextAtSize(line, size);
           const align = annotation.align || 'left';
@@ -1862,25 +1867,33 @@ export default function App() {
     } finally { setBusy(false); }
   }
 
-  async function movePageOrder(fromPage: number, toPage: number) {
-    if (!document || busy || toPage < 1 || toPage > document.pages || fromPage === toPage) return;
+  async function swapPageOrder(firstPage: number, secondPage: number) {
+    if (!document || busy || firstPage < 1 || secondPage < 1 || firstPage > document.pages || secondPage > document.pages || firstPage === secondPage) return;
     setBusy(true);
     try {
       const source = await PDFDocument.load(document.bytes.slice(0));
       const order = source.getPageIndices();
-      const [moved] = order.splice(fromPage - 1, 1);
-      order.splice(toPage - 1, 0, moved);
+      [order[firstPage - 1], order[secondPage - 1]] = [order[secondPage - 1], order[firstPage - 1]];
       const reordered = await PDFDocument.create();
-      const pages = await reordered.copyPages(source, order);
-      pages.forEach(item => reordered.addPage(item));
+      const copied = await reordered.copyPages(source, order);
+      copied.forEach(item => reordered.addPage(item));
       const bytes = await reordered.save({ useObjectStreams: false });
-      const updated = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], document.file.name, {type:'application/pdf'});
-      await openPdf(updated);
-      setPage(toPage);
-      setStatus('Page ' + fromPage + ' moved to position ' + toPage + '.');
-    } catch (error) {
-      setStatus(error instanceof Error ? error.message : 'Could not rearrange pages.');
-    } finally { setBusy(false); }
+      const file = new File([bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer], document.file.name, {type:'application/pdf'});
+      const remap = (n:number) => n===firstPage?secondPage:n===secondPage?firstPage:n;
+      setAnnotations(old=>old.map(item=>({...item,page:remap(item.page)})));
+      setComments(old=>old.map(item=>({...item,page:remap(item.page)})));
+      setStrokes(old=>old.map(item=>({...item,page:remap(item.page)})));
+      setTextHits(old=>old.map(item=>({...item,page:remap(item.page)})));
+      setContinuousHits(old=>old.map(item=>({...item,page:remap(item.page)})));
+      setBookmarks(old=>old.map(item=>({...item,page:remap(item.page)})));
+      setOcrPages(old=>Object.fromEntries(Object.entries(old).map(([k,v])=>[String(remap(Number(k))),v])));
+      setOcrWords(old=>Object.fromEntries(Object.entries(old).map(([k,v])=>[String(remap(Number(k))),v])));
+      const buffer=bytes.buffer.slice(bytes.byteOffset,bytes.byteOffset+bytes.byteLength) as ArrayBuffer;
+      setDocument({file,bytes:buffer,pages:reordered.getPageCount()});
+      setPage(secondPage); setPageContextMenu(null);
+      setStatus('Pages '+firstPage+' and '+secondPage+' swapped. Existing edits and annotations were preserved.');
+    } catch(error) { setStatus(error instanceof Error?error.message:'Could not swap pages.'); }
+    finally { setBusy(false); }
   }
 
   return <main className="app-shell pdf-studio">
@@ -1902,6 +1915,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
       <input className="toolbar-color" aria-label={tool==='erase'?'Eraser brush colour':'Drawing colour'} type="color" value={tool==='erase'?eraseBrushColor:drawColor} onChange={e=>tool==='erase'?setEraseBrushColor(e.target.value):setDrawColor(e.target.value)}/>
       <select className="toolbar-select" aria-label="Drawing width" value={drawWidth} onChange={e=>setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option><option value={8}>8 px</option><option value={12}>12 px</option><option value={16}>16 px</option><option value={24}>24 px</option><option value={32}>32 px</option></select>
+      <button className={selected?.bold?"toolbar-button active":"toolbar-button"} type="button" disabled={!selected} title="Toggle bold" onClick={()=>selected&&updateAnnotation(selected.id,{bold:!selected.bold})}><b>B</b></button>
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
       <span className="toolbar-divider"/>
@@ -1938,7 +1952,13 @@ export default function App() {
       </aside>
 
       <aside className="studio-thumbnails" aria-label="PDF navigation panel"><div className="panel-heading-control"><b>Navigation</b><button className="panel-inline-toggle" type="button" title="Hide left panel" aria-label="Hide left panel" onClick={()=>setShowLeftPanel(false)}>◧</button></div>
-        {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><div key={index+1} className="page-mini-wrap" draggable={!busy} onDragStart={event=>{pageDragRef.current=index+1;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',String(index+1));}} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move';}} onDrop={event=>{event.preventDefault();const from=pageDragRef.current||Number(event.dataTransfer.getData('text/plain'));pageDragRef.current=null;if(from>0&&from!==index+1)void movePageOrder(from,index+1);}} onDragEnd={()=>{pageDragRef.current=null;}} title="Drag this page to a new position"><button className={page===index+1?'page-mini active':'page-mini'} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button><div className="page-order-controls"><button type="button" title="Move page up" aria-label={'Move page '+(index+1)+' up'} disabled={busy||index===0} onClick={()=>void movePageOrder(index+1,index)}>↑</button><button type="button" title="Move page down" aria-label={'Move page '+(index+1)+' down'} disabled={busy||index===document.pages-1} onClick={()=>void movePageOrder(index+1,index+2)}>↓</button></div></div>)}<small>{document.pages} page(s) · Drag pages to reorder, or use ↑ ↓</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
+        {activePanel==='pages' && (document ? <div className="page-mini-list">{Array.from({length:document.pages},(_,index)=><div key={index+1} className="page-mini-wrap" draggable={!busy} onDragStart={event=>{pageDragRef.current=index+1;event.dataTransfer.effectAllowed='move';event.dataTransfer.setData('text/plain',String(index+1));}} onDragOver={event=>{event.preventDefault();event.dataTransfer.dropEffect='move';}} onDrop={event=>{event.preventDefault();const from=pageDragRef.current||Number(event.dataTransfer.getData('text/plain'));pageDragRef.current=null;if(from>0&&from!==index+1)void swapPageOrder(from,index+1);}} onDragEnd={()=>{pageDragRef.current=null;}} title="Drag this page to a new position"><button className={page===index+1?'page-mini active':'page-mini'} onContextMenu={event=>{event.preventDefault();setPageContextMenu({x:event.clientX,y:event.clientY,page:index+1});}} onClick={()=>setPage(index+1)}><span>PDF</span><b>{index+1}</b></button><div className="page-order-controls"><button type="button" title="Move page up" aria-label={'Move page '+(index+1)+' up'} disabled={busy||index===0} onClick={()=>void swapPageOrder(index+1,index)}>↑</button><button type="button" title="Move page down" aria-label={'Move page '+(index+1)+' down'} disabled={busy||index===document.pages-1} onClick={()=>void swapPageOrder(index+1,index+2)}>↓</button></div></div>)}<small>{document.pages} page(s) · Right-click a page to swap with another page, or drag to reorder</small></div> : <div className="thumbnail-empty">Page<br/>thumbnails</div>)}
+        {pageContextMenu && <div style={{position:'fixed',left:Math.min(pageContextMenu.x,window.innerWidth-220),top:Math.min(pageContextMenu.y,window.innerHeight-150),zIndex:1000,background:'#fff',border:'1px solid #cbd5e1',boxShadow:'0 8px 24px rgba(15,23,42,.18)',borderRadius:8,padding:10,width:205}} onContextMenu={e=>e.preventDefault()}>
+          <b style={{display:'block',fontSize:12,marginBottom:8}}>Page {pageContextMenu.page}</b>
+          <button type="button" style={{width:'100%',padding:7,marginBottom:6}} onClick={()=>{const from=pageContextMenu.page;setPageContextMenu(null);const raw=window.prompt('Swap page '+from+' with which page number?',''+Math.min(document?.pages||1,from+1));if(raw===null)return;const to=Number(raw);if(!Number.isInteger(to)||to<1||to>(document?.pages||0)){setStatus('Enter a valid page number.');return;}void swapPageOrder(from,to);}}>⇄ Swap with page number…</button>
+          <button type="button" style={{width:'100%',padding:7}} onClick={()=>{setPage(pageContextMenu.page);setPageContextMenu(null);}}>Go to this page</button>
+          <button type="button" style={{width:'100%',padding:7,marginTop:6}} onClick={()=>setPageContextMenu(null)}>Cancel</button>
+        </div>}
         {activePanel==='bookmarks' && <div className="nav-results"><b>Bookmarks</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>No PDF bookmarks found in this file.</p>}</div>}
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results search-panel"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
