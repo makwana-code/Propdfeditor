@@ -258,7 +258,7 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
+type TextAnnotation = { id: string; page: number; ocrRebuilt?: boolean; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; color?: string };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number; cleanBackground?: boolean };
@@ -530,7 +530,16 @@ export default function App() {
           }
           flush();
         }
-        if (!cancelled && hits.length) {
+        if (!cancelled && ocrWords[page]?.length) {
+          // Prefer the OCR word geometry from the original scan. The rebuilt PDF's
+          // text extraction can merge words or shift hitboxes, making OCR text
+          // appear selectable but impossible to target reliably for editing.
+          setTextHits(ocrWords[page].map((word, index) => ({
+            id: 'ocr-' + page + '-' + index, page, text: word.text,
+            x: word.x, y: word.y, w: word.w, h: word.h,
+            fontSize: Math.max(7, Math.min(24, word.h * viewport.height * 0.72 / Math.max(.01, viewport.scale)))
+          })));
+        } else if (!cancelled && hits.length) {
           setTextHits(hits);
         } else if (!cancelled) {
           // Image-only/scanned page: automatically OCR it so Edit Text can target recognized words.
@@ -1021,7 +1030,8 @@ export default function App() {
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, originalText: hit.text, sourceRect: { x0: hit.x, y0: hit.y, x1: hit.x + hit.w, y1: hit.y + hit.h }, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
       font: style.font, size: Math.max(6, Math.min(36, hit.fontSize)),
-      color: appearance.color, styleId: 'body', align: 'left', coverOriginal: false, sourceHitId: hit.id
+      color: appearance.color, styleId: 'body', align: 'left', coverOriginal: false, sourceHitId: hit.id,
+      ocrRebuilt: hit.id.startsWith('ocr-')
     };
     setAnnotations(old => [...old, annotation]);
     setSelectedId(id);
@@ -1220,6 +1230,15 @@ export default function App() {
       setOcrCompareMode(true);
       const editableFile = new File([editableBlob], document.file.name.replace(/\\.pdf$/i, '') + '-OCR-Editable.pdf', { type: 'application/pdf' });
       await openPdf(editableFile);
+      // openPdf resets document-specific state. Restore the OCR word map and
+      // install stable hit targets for every page after opening the rebuilt PDF.
+      setOcrPages(extracted);
+      setOcrWords(positionedWords);
+      const firstPageWords = positionedWords[1] || [];
+      setTextHits(firstPageWords.map((word, index) => ({
+        id: 'ocr-1-' + index, page: 1, text: word.text, x: word.x, y: word.y,
+        w: word.w, h: word.h, fontSize: Math.max(7, Math.min(24, word.h * (pageSizeRef.current.height || 700) * 0.72 / Math.max(.01, fitZoom * zoom / 100)))
+      })));
       setPage(1);
       setActivePanel('ocr');
       setStatus('OCR complete. Rebuilt text is visible and editable on clean paper; artwork regions were preserved. Edit recognized text on the right.');
@@ -1417,7 +1436,7 @@ export default function App() {
     setBusy(true);
     try {
       let sourceBytes = document.bytes.slice(0);
-      const originalEdits = annotations.filter(item => item.coverOriginal && item.sourceRect && item.originalText);
+      const originalEdits = annotations.filter(item => item.coverOriginal && item.sourceRect && item.originalText && !item.ocrRebuilt);
       if (originalEdits.length) {
         setStatus('Replacing original PDF text content…');
         const form = new FormData();
@@ -1455,7 +1474,7 @@ export default function App() {
         // types a replacement or actually drags the text to a new position.
         if (annotation.sourceHitId && !annotation.coverOriginal) continue;
         // Original text has already been removed and reinserted by the native PDF engine.
-        if (annotation.coverOriginal) continue;
+        if (annotation.coverOriginal && !annotation.ocrRebuilt) continue;
         const target = pdf.getPage(annotation.page - 1);
         const { width, height } = target.getSize();
         const fontKey = annotation.font + ':' + (annotation.bold ? 'b' : '') + (annotation.italic ? 'i' : '');
