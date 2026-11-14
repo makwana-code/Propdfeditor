@@ -261,7 +261,7 @@ function fontStyleFor(annotation: TextAnnotation) {
 type TextAnnotation = { id: string; page: number; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; color?: string };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
-type OcrWord = { text: string; x: number; y: number; w: number; h: number };
+type OcrWord = { text: string; x: number; y: number; w: number; h: number; cleanBackground?: boolean };
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
 type EditorSnapshot = { annotations: TextAnnotation[]; comments: PdfComment[]; strokes: DrawStroke[] };
 type EditorHistoryItem = { id: string; label: string; createdAt: number; snapshot: EditorSnapshot };
@@ -1104,16 +1104,32 @@ export default function App() {
         // Keep individual word boxes, not only whole-line boxes. Their x/y/width
         // coordinates preserve the OCR-detected word positions and inter-word gaps.
         const recognizedWords = (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 20);
+        const hasCleanPaperBehind = (box: any) => {
+          // Sample outside the glyph box: rebuild only light, low-variation paper.
+          // Coloured/photo regions (stamps, signatures, logos) stay untouched.
+          const image = context.getImageData(0, 0, canvas.width, canvas.height);
+          const x0=Math.max(0,Math.floor(box.x0)), x1=Math.min(canvas.width-1,Math.ceil(box.x1));
+          const y0=Math.max(0,Math.floor(box.y0)), y1=Math.min(canvas.height-1,Math.ceil(box.y1));
+          const pad=Math.max(2,Math.round((y1-y0)*.16)), samples:number[][]=[];
+          const sample=(x:number,y:number)=>{const i=(Math.max(0,Math.min(canvas.height-1,y))*canvas.width+Math.max(0,Math.min(canvas.width-1,x)))*4;samples.push([image.data[i],image.data[i+1],image.data[i+2]]);};
+          for(let x=x0;x<=x1;x+=Math.max(1,Math.floor((x1-x0)/8))){sample(x,y0-pad);sample(x,y1+pad);}
+          for(let y=y0;y<=y1;y+=Math.max(1,Math.floor((y1-y0)/4))){sample(x0-pad,y);sample(x1+pad,y);}
+          const brightness=samples.reduce((a,p)=>a+(p[0]+p[1]+p[2])/3,0)/Math.max(1,samples.length);
+          const levels=samples.map(p=>(p[0]+p[1]+p[2])/3);
+          return brightness>=205 && Math.max(...levels)-Math.min(...levels)<=58;
+        };
         const words: OcrWord[] = recognizedWords.length ? recognizedWords.map((word: any) => ({
           text: word.text.trim(), x: Math.max(0, Math.min(1, word.bbox.x0 / viewport.width)),
           y: Math.max(0, Math.min(1, word.bbox.y0 / viewport.height)),
           w: Math.max(.004, Math.min(1, (word.bbox.x1 - word.bbox.x0) / viewport.width)),
-          h: Math.max(.008, Math.min(1, (word.bbox.y1 - word.bbox.y0) / viewport.height))
+          h: Math.max(.008, Math.min(1, (word.bbox.y1 - word.bbox.y0) / viewport.height)),
+          cleanBackground: hasCleanPaperBehind(word.bbox)
         })) : (result.data.lines || []).filter((line: any) => line.text?.trim() && line.confidence >= 20).map((line: any) => ({
           text: line.text.trim(), x: Math.max(0, Math.min(1, line.bbox.x0 / viewport.width)),
           y: Math.max(0, Math.min(1, line.bbox.y0 / viewport.height)),
           w: Math.max(.004, Math.min(1, (line.bbox.x1 - line.bbox.x0) / viewport.width)),
-          h: Math.max(.008, Math.min(1, (line.bbox.y1 - line.bbox.y0) / viewport.height))
+          h: Math.max(.008, Math.min(1, (line.bbox.y1 - line.bbox.y0) / viewport.height)),
+          cleanBackground: hasCleanPaperBehind(line.bbox)
         }));
         if (words.length) positionedWords[pageNumber] = words;
         setOcrProgress(Math.round(pageNumber / pdf.numPages * 100));
@@ -1136,25 +1152,33 @@ export default function App() {
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
       setActivePanel('ocr');
-      setStatus('OCR words and spacing detected. Building a separate editable PDF…');
-      // Keep the original scan visible beside the generated OCR PDF. The OCR PDF
-      // retains the scanned page image and adds positioned selectable text objects.
+      setStatus('Reconstructing text and preserving stamps, signatures and images…');
+      // Create visible PDF text objects and locally clear clean paper first.
+      // Coloured/photographic areas remain as the original raster artwork.
       const editablePdf = await PDFDocument.load(document.bytes.slice(0));
       const editableOcrFont = await editablePdf.embedFont(StandardFonts.Helvetica);
+      let rebuiltCount = 0;
+      let preservedArtworkCount = 0;
       for (const [pageNumber, words] of Object.entries(positionedWords)) {
         const target = editablePdf.getPage(Number(pageNumber) - 1);
         const { width, height } = target.getSize();
         for (const word of words) {
           if (!word.text || word.w <= 0 || word.h <= 0) continue;
-          const size = Math.max(3, Math.min(48, word.h * height * 0.82));
-          target.drawText(word.text, {
-            x: word.x * width,
-            y: height - (word.y + word.h) * height + size * 0.08,
-            size,
-            font: editableOcrFont,
-            opacity: 0,
-            maxWidth: Math.max(1, word.w * width * 1.15)
-          });
+          const x=word.x*width, yTop=height-word.y*height, boxWidth=word.w*width, boxHeight=word.h*height;
+          const size=Math.max(4,Math.min(42,boxHeight*.78));
+          const latin=/^[\\x20-\\x7E]+$/.test(word.text);
+          if(word.cleanBackground && latin){
+            const padX=Math.max(.8,boxHeight*.10),padY=Math.max(.5,boxHeight*.08);
+            target.drawRectangle({x:Math.max(0,x-padX),y:Math.max(0,yTop-boxHeight-padY),width:Math.min(width-Math.max(0,x-padX),boxWidth+padX*2),height:boxHeight+padY*2,color:rgb(1,1,1)});
+            const measured=editableOcrFont.widthOfTextAtSize(word.text,size);
+            const fitSize=measured>boxWidth*1.12?size*(boxWidth*1.12)/measured:size;
+            target.drawText(word.text,{x,y:yTop-boxHeight+Math.max(0,(boxHeight-fitSize)*.12),size:fitSize,font:editableOcrFont,color:rgb(.08,.08,.08)});
+            rebuiltCount++;
+          } else {
+            // Preserve text printed over coloured artwork; keep it searchable invisibly.
+            if(latin) target.drawText(word.text,{x,y:yTop-boxHeight+size*.08,size,font:editableOcrFont,color:rgb(0,0,0),opacity:0});
+            preservedArtworkCount++;
+          }
         }
       }
       const editableBytes = await editablePdf.save({ useObjectStreams: false });
@@ -1170,7 +1194,7 @@ export default function App() {
       await openPdf(editableFile);
       setPage(1);
       setActivePanel('ocr');
-      setStatus('OCR complete. Original scan is on the left and the editable OCR PDF is on the right. Use the existing editing tools on the right-side PDF.');
+      setStatus('OCR complete. Rebuilt text is visible and editable on clean paper; artwork regions were preserved. Edit recognized text on the right.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
@@ -1770,7 +1794,7 @@ export default function App() {
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results search-panel"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
         {activePanel==='history' && <div className="nav-results edit-history-panel"><div className="history-heading"><b>Edit History</b><button type="button" disabled={!historyItems.length} onClick={()=>{setHistoryItems([]);setStatus('Edit history list cleared. Current PDF edits are unchanged.');}}>Clear list</button></div><p>Choose a previous step to restore that version. Deleting an entry only removes it from this history list.</p>{historyItems.slice().reverse().map(item=><div className="history-item" key={item.id}><div><b>{item.label}</b><small>{new Date(item.createdAt).toLocaleTimeString()}</small></div><button type="button" onClick={()=>restoreHistoryItem(item)}>Restore</button><button type="button" aria-label={'Delete '+item.label+' from history'} onClick={()=>setHistoryItems(old=>old.filter(entry=>entry.id!==item.id))}>×</button></div>)}{!historyItems.length&&<p>No history entries yet.</p>}</div>}
-        {activePanel==='ocr' && <div className="nav-results ocr-panel"><b>Scanned PDF OCR</b><p>Scan and recognize every word with its exact position and gap. After processing, the original scan stays on the left and the searchable, selectable OCR PDF opens on the right in this workspace. Edit the right-side PDF with the existing tools.</p><label className="ocr-field">OCR language<select value={ocrLanguage} disabled={busy} onChange={event=>setOcrLanguage(event.target.value)}><option value="eng">English</option><option value="hin">Hindi</option><option value="guj">Gujarati</option><option value="eng+hin">English + Hindi</option><option value="eng+guj">English + Gujarati</option><option value="eng+hin+guj">English + Hindi + Gujarati</option></select></label><label className="ocr-field">Recognition quality<select value={ocrScale} disabled={busy} onChange={event=>setOcrScale(Number(event.target.value))}><option value={2}>Standard (2×)</option><option value={2.5}>High (2.5×)</option><option value={3}>Very High (3×)</option></select></label><button type="button" className="ocr-run-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'Scan & Create Editable PDF'}</button>{busy&&<div className="ocr-progress"><div><span>OCR progress</span><b>{ocrProgress}%</b></div><div className="ocr-progress-track"><i style={{width:ocrProgress+'%'}}/></div></div>}<p>{Object.keys(ocrWords).length} page(s) have OCR text. Each recognized word is positioned separately so spaces and line alignment are retained. Open the new PDF in ProPDF Studio to edit the recognized text.</p></div>}
+        {activePanel==='ocr' && <div className="nav-results ocr-panel"><b>Scanned PDF OCR</b><p>Reconstruct scanned text as visible PDF text objects where paper is clean. Photos, stamps, signatures and coloured artwork are preserved from the scan. Original stays left; edit recognized text on the right. Exact fonts and complex layouts may need manual correction.</p><label className="ocr-field">OCR language<select value={ocrLanguage} disabled={busy} onChange={event=>setOcrLanguage(event.target.value)}><option value="eng">English</option><option value="hin">Hindi</option><option value="guj">Gujarati</option><option value="eng+hin">English + Hindi</option><option value="eng+guj">English + Gujarati</option><option value="eng+hin+guj">English + Hindi + Gujarati</option></select></label><label className="ocr-field">Recognition quality<select value={ocrScale} disabled={busy} onChange={event=>setOcrScale(Number(event.target.value))}><option value={2}>Standard (2×)</option><option value={2.5}>High (2.5×)</option><option value={3}>Very High (3×)</option></select></label><button type="button" className="ocr-run-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'Scan & Create Editable PDF'}</button>{busy&&<div className="ocr-progress"><div><span>OCR progress</span><b>{ocrProgress}%</b></div><div className="ocr-progress-track"><i style={{width:ocrProgress+'%'}}/></div></div>}<p>{Object.keys(ocrWords).length} page(s) have OCR text. Rebuilt text is real visible PDF text where safe to replace; image regions remain preserved. Select recognized words or lines on the right to edit.</p></div>}
       </aside>
       <div className="panel-resizer left-resizer" role="separator" aria-orientation="vertical" aria-label="Resize navigation panel" title="Drag to resize navigation panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('left')}} />
       </>}
