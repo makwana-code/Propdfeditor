@@ -1108,7 +1108,11 @@ export default function App() {
       })();
       const { createWorker } = await import('tesseract.js');
       worker = await createWorker(ocrLanguage);
-      await worker.setParameters({ preserve_interword_spaces: '1' });
+      await worker.setParameters({
+        preserve_interword_spaces: '1',
+        tessedit_pageseg_mode: '6',
+        user_defined_dpi: '300'
+      });
       const extracted: Record<number,string> = {};
       const positionedWords: Record<number,OcrWord[]> = {};
       setOcrProgress(0);
@@ -1133,7 +1137,23 @@ export default function App() {
         const context = canvas.getContext('2d');
         if (!context) throw new Error('Could not create an OCR canvas for page ' + pageNumber + '.');
         await pdfPage.render({ canvasContext: context, viewport }).promise;
-        const result: any = await worker.recognize(canvas);
+        // Enhanced local OCR preprocessing: upscale rendering, normalize
+        // illumination, convert to grayscale and increase text contrast before
+        // Tesseract recognition. Coordinates remain identical to the source page.
+        const processed = window.document.createElement('canvas');
+        processed.width = canvas.width;
+        processed.height = canvas.height;
+        const processedContext = processed.getContext('2d');
+        if (!processedContext) throw new Error('Could not create the OCR preprocessing canvas.');
+        processedContext.drawImage(canvas, 0, 0);
+        const pixels = processedContext.getImageData(0, 0, processed.width, processed.height);
+        for (let i = 0; i < pixels.data.length; i += 4) {
+          const luminance = 0.299*pixels.data[i] + 0.587*pixels.data[i+1] + 0.114*pixels.data[i+2];
+          const contrast = Math.max(0, Math.min(255, (luminance - 128) * 1.28 + 128));
+          pixels.data[i] = pixels.data[i+1] = pixels.data[i+2] = contrast;
+        }
+        processedContext.putImageData(pixels, 0, 0);
+        const result: any = await worker.recognize(processed);
         const text = result.data.text.trim();
         if (text) extracted[pageNumber] = text;
         // Keep individual word boxes, not only whole-line boxes. Their x/y/width
@@ -1171,6 +1191,8 @@ export default function App() {
         setOcrProgress(Math.round(pageNumber / pdf.numPages * 100));
         canvas.width = 0;
         canvas.height = 0;
+        processed.width = 0;
+        processed.height = 0;
       }
       setOcrPages(old => ({ ...old, ...extracted }));
       setOcrWords(old => ({ ...old, ...positionedWords }));
