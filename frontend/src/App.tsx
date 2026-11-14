@@ -309,7 +309,7 @@ export default function App() {
   const pageDragRef = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Open a PDF to start editing.');
-  const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'|'history'>('pages');
+  const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'|'history'|'ocr'>('pages');
   const [showLeftPanel, setShowLeftPanel] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [leftPanelWidth, setLeftPanelWidth] = useState(194);
@@ -324,6 +324,9 @@ export default function App() {
   const [searchResults, setSearchResults] = useState<Array<{page:number;text:string}>>([]);
   const [ocrPages, setOcrPages] = useState<Record<number,string>>({});
   const [ocrWords, setOcrWords] = useState<Record<number,OcrWord[]>>({});
+  const [ocrLanguage, setOcrLanguage] = useState('eng');
+  const [ocrScale, setOcrScale] = useState(3);
+  const [ocrProgress, setOcrProgress] = useState(0);
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
@@ -1076,13 +1079,17 @@ export default function App() {
         return await task.promise;
       })();
       const { createWorker } = await import('tesseract.js');
-      worker = await createWorker('eng');
+      worker = await createWorker(ocrLanguage);
+      await worker.setParameters({ preserve_interword_spaces: '1' });
       const extracted: Record<number,string> = {};
       const positionedWords: Record<number,OcrWord[]> = {};
+      setOcrProgress(0);
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
-        setStatus('OCR processing page ' + pageNumber + ' of ' + pdf.numPages + '…');
+        setStatus('High-resolution OCR: page ' + pageNumber + ' of ' + pdf.numPages + '…');
         const pdfPage = await pdf.getPage(pageNumber);
-        const viewport = pdfPage.getViewport({ scale: 1.6 });
+        const baseViewport = pdfPage.getViewport({ scale: 1 });
+        const safeScale = Math.min(ocrScale, 4200 / Math.max(baseViewport.width, baseViewport.height));
+        const viewport = pdfPage.getViewport({ scale: Math.max(1.5, safeScale) });
         const canvas = window.document.createElement('canvas');
         canvas.width = Math.ceil(viewport.width);
         canvas.height = Math.ceil(viewport.height);
@@ -1092,14 +1099,21 @@ export default function App() {
         const result: any = await worker.recognize(canvas);
         const text = result.data.text.trim();
         if (text) extracted[pageNumber] = text;
-        const words = (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 35).map((word: any) => ({
-          text: word.text.trim(),
-          x: Math.max(0, Math.min(1, word.bbox.x0 / viewport.width)),
+        const lines = (result.data.lines || []).filter((line: any) => line.text?.trim() && line.confidence >= 20);
+        const words: OcrWord[] = lines.length ? lines.map((line: any) => ({
+          text: line.text.trim(),
+          x: Math.max(0, Math.min(1, line.bbox.x0 / viewport.width)),
+          y: Math.max(0, Math.min(1, line.bbox.y0 / viewport.height)),
+          w: Math.max(.004, Math.min(1, (line.bbox.x1 - line.bbox.x0) / viewport.width)),
+          h: Math.max(.008, Math.min(1, (line.bbox.y1 - line.bbox.y0) / viewport.height))
+        })) : (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 20).map((word: any) => ({
+          text: word.text.trim(), x: Math.max(0, Math.min(1, word.bbox.x0 / viewport.width)),
           y: Math.max(0, Math.min(1, word.bbox.y0 / viewport.height)),
-          w: Math.max(0, Math.min(1, (word.bbox.x1 - word.bbox.x0) / viewport.width)),
-          h: Math.max(0, Math.min(1, (word.bbox.y1 - word.bbox.y0) / viewport.height))
+          w: Math.max(.004, Math.min(1, (word.bbox.x1 - word.bbox.x0) / viewport.width)),
+          h: Math.max(.008, Math.min(1, (word.bbox.y1 - word.bbox.y0) / viewport.height))
         }));
         if (words.length) positionedWords[pageNumber] = words;
+        setOcrProgress(Math.round(pageNumber / pdf.numPages * 100));
         canvas.width = 0;
         canvas.height = 0;
       }
@@ -1119,7 +1133,7 @@ export default function App() {
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
       setActivePanel('search');
-      setStatus('Full-document OCR completed. Recognized text is searchable across ' + pdf.numPages + ' page(s).');
+      setStatus('OCR conversion complete. Text is searchable and each recognized line can be selected and edited; original scanned pages, dimensions and graphics remain as the visual background. Download to create the OCR-enabled PDF.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
@@ -1710,6 +1724,7 @@ export default function App() {
         <button className={activePanel==='outline'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('outline')}>☷<span>Outline</span></button>
         <button className={activePanel==='search'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('search')}>⌕<span>Search</span></button>
         <button className={activePanel==='history'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('history')}>↶<span>History</span></button>
+        <button className={activePanel==='ocr'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('ocr')}>文<span>OCR</span></button>
       </aside>
 
       <aside className="studio-thumbnails" aria-label="PDF navigation panel"><div className="panel-heading-control"><b>Navigation</b><button className="panel-inline-toggle" type="button" title="Hide left panel" aria-label="Hide left panel" onClick={()=>setShowLeftPanel(false)}>◧</button></div>
@@ -1718,6 +1733,7 @@ export default function App() {
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results search-panel"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
         {activePanel==='history' && <div className="nav-results edit-history-panel"><div className="history-heading"><b>Edit History</b><button type="button" disabled={!historyItems.length} onClick={()=>{setHistoryItems([]);setStatus('Edit history list cleared. Current PDF edits are unchanged.');}}>Clear list</button></div><p>Choose a previous step to restore that version. Deleting an entry only removes it from this history list.</p>{historyItems.slice().reverse().map(item=><div className="history-item" key={item.id}><div><b>{item.label}</b><small>{new Date(item.createdAt).toLocaleTimeString()}</small></div><button type="button" onClick={()=>restoreHistoryItem(item)}>Restore</button><button type="button" aria-label={'Delete '+item.label+' from history'} onClick={()=>setHistoryItems(old=>old.filter(entry=>entry.id!==item.id))}>×</button></div>)}{!historyItems.length&&<p>No history entries yet.</p>}</div>}
+        {activePanel==='ocr' && <div className="nav-results ocr-panel"><b>Scanned PDF OCR</b><p>Convert scanned pages into searchable text with editable line targets. The original page image, page size, tables, borders and graphics remain unchanged underneath.</p><label className="ocr-field">OCR language<select value={ocrLanguage} disabled={busy} onChange={event=>setOcrLanguage(event.target.value)}><option value="eng">English</option><option value="hin">Hindi</option><option value="guj">Gujarati</option><option value="eng+hin">English + Hindi</option><option value="eng+guj">English + Gujarati</option><option value="eng+hin+guj">English + Hindi + Gujarati</option></select></label><label className="ocr-field">Recognition quality<select value={ocrScale} disabled={busy} onChange={event=>setOcrScale(Number(event.target.value))}><option value={2}>Standard (2×)</option><option value={2.5}>High (2.5×)</option><option value={3}>Very High (3×)</option></select></label><button type="button" className="ocr-run-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'Run OCR & Create Editable Layer'}</button>{busy&&<div className="ocr-progress"><div><span>OCR progress</span><b>{ocrProgress}%</b></div><div className="ocr-progress-track"><i style={{width:ocrProgress+'%'}}/></div></div>}<p>{Object.keys(ocrWords).length} page(s) have OCR text. Click a recognized line in the page to edit it. Use Download to save the OCR-enabled PDF.</p></div>}
       </aside>
       <div className="panel-resizer left-resizer" role="separator" aria-orientation="vertical" aria-label="Resize navigation panel" title="Drag to resize navigation panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('left')}} />
       </>}
@@ -1769,7 +1785,7 @@ export default function App() {
         </div>
       </aside>}
     </section>
-    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.edit-history-panel{padding:10px!important}.history-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}.history-heading button,.history-item button{border:1px solid #cbd5e1;background:#fff;border-radius:5px;padding:4px 7px;font-size:11px;cursor:pointer}.edit-history-panel>p{font-size:11px;color:#64748b;line-height:1.4}.history-item{display:flex;align-items:center;gap:4px;padding:7px 0;border-bottom:1px solid #e2e8f0}.history-item>div{min-width:0;flex:1;display:flex;flex-direction:column}.history-item b{font-size:11px}.history-item small{font-size:10px;color:#64748b}.history-item button:disabled{opacity:.4;cursor:not-allowed}.pdf-search-highlight{border-radius:2px}.toolbar-zoom-control{display:inline-flex;align-items:center;gap:2px;border:1px solid #cbd5e1;border-radius:6px;padding:0 5px;height:34px;background:#fff;color:#334155}.toolbar-zoom-input{width:48px;border:0;outline:0;text-align:center;font:inherit;font-size:13px;color:inherit;background:transparent;padding:0}.toolbar-zoom-input::-webkit-inner-spin-button,.toolbar-zoom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.panel-resizer{width:6px;min-width:6px;cursor:col-resize;position:relative;z-index:30;touch-action:none;background:transparent}.panel-resizer:hover,.panel-resizer:active{background:#93c5fd}.left-resizer{grid-column:3;grid-row:1}.right-resizer{grid-column:5;grid-row:1;margin-left:-3px}.download-retry-link{display:inline-flex;align-items:center;font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:6px 10px;text-decoration:none;white-space:nowrap;cursor:pointer;position:relative;z-index:100}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
+    <style>{`.panel-heading-control{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:9px 8px;border-bottom:1px solid #e2e8f0;font-size:12px;color:#475569}.panel-inline-toggle{width:28px;height:28px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#334155;cursor:pointer;font-size:17px;flex:0 0 auto}.search-panel{min-width:0;padding:14px!important}.search-panel .search-inline{display:flex;gap:6px;flex-wrap:wrap}.search-panel .search-inline input{width:100%;min-width:0;height:38px;font-size:14px}.search-panel .search-inline button{height:34px}.search-panel>button{font-size:13px;line-height:1.4;padding:10px!important;white-space:normal}.ocr-panel{padding:10px!important}.ocr-panel>p{font-size:11px;color:#64748b;line-height:1.45;white-space:normal}.ocr-field{display:flex;flex-direction:column;gap:5px;margin:12px 0;font-size:11px;font-weight:600}.ocr-field select{width:100%;padding:8px;border:1px solid #cbd5e1;border-radius:6px;background:#fff;color:#0f172a}.ocr-run-button{width:100%;padding:9px 8px;border:0;border-radius:6px;background:#2563eb;color:#fff;font-weight:600;cursor:pointer}.ocr-run-button:disabled{opacity:.55;cursor:not-allowed}.ocr-progress{margin:12px 0}.ocr-progress>div:first-child{display:flex;justify-content:space-between;font-size:11px;margin-bottom:5px}.ocr-progress-track{height:6px;background:#e2e8f0;border-radius:10px;overflow:hidden}.ocr-progress-track i{display:block;height:100%;background:#2563eb;transition:width .2s}.edit-history-panel{padding:10px!important}.history-heading{display:flex;align-items:center;justify-content:space-between;gap:6px}.history-heading button,.history-item button{border:1px solid #cbd5e1;background:#fff;border-radius:5px;padding:4px 7px;font-size:11px;cursor:pointer}.edit-history-panel>p{font-size:11px;color:#64748b;line-height:1.4}.history-item{display:flex;align-items:center;gap:4px;padding:7px 0;border-bottom:1px solid #e2e8f0}.history-item>div{min-width:0;flex:1;display:flex;flex-direction:column}.history-item b{font-size:11px}.history-item small{font-size:10px;color:#64748b}.history-item button:disabled{opacity:.4;cursor:not-allowed}.pdf-search-highlight{border-radius:2px}.toolbar-zoom-control{display:inline-flex;align-items:center;gap:2px;border:1px solid #cbd5e1;border-radius:6px;padding:0 5px;height:34px;background:#fff;color:#334155}.toolbar-zoom-input{width:48px;border:0;outline:0;text-align:center;font:inherit;font-size:13px;color:inherit;background:transparent;padding:0}.toolbar-zoom-input::-webkit-inner-spin-button,.toolbar-zoom-input::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}.panel-resizer{width:6px;min-width:6px;cursor:col-resize;position:relative;z-index:30;touch-action:none;background:transparent}.panel-resizer:hover,.panel-resizer:active{background:#93c5fd}.left-resizer{grid-column:3;grid-row:1}.right-resizer{grid-column:5;grid-row:1;margin-left:-3px}.download-retry-link{display:inline-flex;align-items:center;font-size:12px;font-weight:700;color:#fff;background:#2563eb;border-radius:5px;padding:6px 10px;text-decoration:none;white-space:nowrap;cursor:pointer;position:relative;z-index:100}.studio-workspace{position:relative}.panel-restore{position:absolute;z-index:50;top:50%;transform:translateY(-50%);width:30px;height:48px;border:1px solid #cbd5e1;background:#fff;color:#334155;cursor:pointer}.panel-restore.left{left:0;border-radius:0 7px 7px 0}.panel-restore.right{right:2px;border-radius:7px 0 0 7px}`}</style>
     <footer className="studio-footer"><span role="status">{status}</span><span>ProPDF Studio</span></footer>
   </main>;
 }
