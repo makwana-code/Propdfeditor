@@ -1174,6 +1174,7 @@ export default function App() {
       }
       setStatus('New OCR PDF created and opened in a new tab. Word positions and gaps are preserved as selectable OCR text; the original scan, page sizes, lines and borders remain as the background. Open this PDF in ProPDF Studio to edit recognized text.');
     } catch (error) {
+      if (ocrTab && !ocrTab.closed) ocrTab.close();
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
       if (worker) await worker.terminate();
