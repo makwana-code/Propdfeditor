@@ -1154,8 +1154,9 @@ export default function App() {
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
       setActivePanel('ocr');
       setStatus('Reconstructing text and preserving stamps, signatures and images…');
-      // Create visible PDF text objects and locally clear clean paper first.
-      // Coloured/photographic areas remain as the original raster artwork.
+      // Reconstruct by OCR line blocks rather than painting a white rectangle
+      // behind every word. This avoids the "white holes" that damaged table
+      // rules, underlines and spaces in mixed-content scans.
       const editablePdf = await PDFDocument.load(document.bytes.slice(0));
       const editableOcrFont = await editablePdf.embedFont(StandardFonts.Helvetica);
       let rebuiltCount = 0;
@@ -1163,22 +1164,48 @@ export default function App() {
       for (const [pageNumber, words] of Object.entries(positionedWords)) {
         const target = editablePdf.getPage(Number(pageNumber) - 1);
         const { width, height } = target.getSize();
-        for (const word of words) {
-          if (!word.text || word.w <= 0 || word.h <= 0) continue;
-          const x=word.x*width, yTop=height-word.y*height, boxWidth=word.w*width, boxHeight=word.h*height;
-          const size=Math.max(4,Math.min(42,boxHeight*.78));
-          const latin=/^[\\x20-\\x7E]+$/.test(word.text);
-          if(word.cleanBackground && latin){
-            const padX=Math.max(.8,boxHeight*.10),padY=Math.max(.5,boxHeight*.08);
-            target.drawRectangle({x:Math.max(0,x-padX),y:Math.max(0,yTop-boxHeight-padY),width:Math.min(width-Math.max(0,x-padX),boxWidth+padX*2),height:boxHeight+padY*2,color:rgb(1,1,1)});
+        const validWords = words.filter(word => word.text && word.w > 0 && word.h > 0);
+        const ordered = [...validWords].sort((a,b) => (a.y+a.h/2)-(b.y+b.h/2) || a.x-b.x);
+        const lines: OcrWord[][] = [];
+        for (const word of ordered) {
+          const center = word.y + word.h/2;
+          const line = lines.find(items => {
+            const avgCenter = items.reduce((sum,item)=>sum+item.y+item.h/2,0)/items.length;
+            const avgHeight = items.reduce((sum,item)=>sum+item.h,0)/items.length;
+            return Math.abs(center-avgCenter) <= Math.max(word.h,avgHeight)*0.48;
+          });
+          if (line) line.push(word); else lines.push([word]);
+        }
+        for (const line of lines) {
+          line.sort((a,b)=>a.x-b.x);
+          const lineIsRebuildable = line.every(word => word.cleanBackground && /^[\\x20-\\x7E]+$/.test(word.text));
+          if (!lineIsRebuildable) {
+            // Keep mixed artwork, handwriting, coloured backgrounds and non-Latin
+            // glyphs untouched; add an invisible searchable layer where supported.
+            for (const word of line) {
+              if (/^[\\x20-\\x7E]+$/.test(word.text)) {
+                const x=word.x*width, yTop=height-word.y*height, boxHeight=word.h*height;
+                const size=Math.max(4,Math.min(42,boxHeight*.78));
+                target.drawText(word.text,{x,y:yTop-boxHeight+size*.08,size,font:editableOcrFont,color:rgb(0,0,0),opacity:0});
+              }
+              preservedArtworkCount++;
+            }
+            continue;
+          }
+          const left=Math.max(0,Math.min(...line.map(word=>word.x))*width-1);
+          const right=Math.min(width,Math.max(...line.map(word=>word.x+word.w))*width+1);
+          const top=Math.min(...line.map(word=>word.y))*height;
+          const bottom=Math.max(...line.map(word=>word.y+word.h))*height;
+          const lineHeight=Math.max(1,bottom-top);
+          // One line-level mask is less destructive than separate word masks.
+          target.drawRectangle({x:left,y:height-bottom-lineHeight*.08,width:Math.max(0,right-left),height:lineHeight*1.16,color:rgb(1,1,1)});
+          for (const word of line) {
+            const x=word.x*width, yTop=height-word.y*height, boxWidth=word.w*width, boxHeight=word.h*height;
+            const size=Math.max(4,Math.min(42,boxHeight*.78));
             const measured=editableOcrFont.widthOfTextAtSize(word.text,size);
             const fitSize=measured>boxWidth*1.12?size*(boxWidth*1.12)/measured:size;
             target.drawText(word.text,{x,y:yTop-boxHeight+Math.max(0,(boxHeight-fitSize)*.12),size:fitSize,font:editableOcrFont,color:rgb(.08,.08,.08)});
             rebuiltCount++;
-          } else {
-            // Preserve text printed over coloured artwork; keep it searchable invisibly.
-            if(latin) target.drawText(word.text,{x,y:yTop-boxHeight+size*.08,size,font:editableOcrFont,color:rgb(0,0,0),opacity:0});
-            preservedArtworkCount++;
           }
         }
       }
