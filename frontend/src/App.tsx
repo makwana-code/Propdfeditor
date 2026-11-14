@@ -332,6 +332,8 @@ export default function App() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const pdfRef = useRef<any>(null);
+  const autoOcrOutputFileRef = useRef<File | null>(null);
+  const autoOcrStartedFileRef = useRef<File | null>(null);
   const resizeRef = useRef<ResizeSession | null>(null);
   const moveRef = useRef<ResizeSession | null>(null);
   const commentMoveRef = useRef<{id:string;startX:number;startY:number;start:{x:number;y:number};pageWidth:number;pageHeight:number;cardWidth:number;cardHeight:number}|null>(null);
@@ -344,6 +346,19 @@ export default function App() {
     const url = URL.createObjectURL(new Blob([document.bytes], { type: 'application/pdf' }));
     setContinuousUrl(url);
     return () => URL.revokeObjectURL(url);
+  }, [document]);
+
+  useEffect(() => {
+    if (!document) return;
+    // OCR every newly uploaded document automatically. Native-text PDFs are
+    // inspected page-by-page by runOcr and left intact; scanned pages are rebuilt.
+    if (autoOcrOutputFileRef.current === document.file) {
+      autoOcrOutputFileRef.current = null;
+      return;
+    }
+    if (autoOcrStartedFileRef.current === document.file) return;
+    autoOcrStartedFileRef.current = document.file;
+    void runOcr();
   }, [document]);
 
   useEffect(() => {
@@ -1099,6 +1114,15 @@ export default function App() {
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         setStatus('High-resolution OCR: page ' + pageNumber + ' of ' + pdf.numPages + '…');
         const pdfPage = await pdf.getPage(pageNumber);
+        // Do not OCR pages that already contain a meaningful native text layer.
+        // This makes the workflow hybrid: ordinary PDFs retain native editable
+        // text, while image-only scanned pages get OCR reconstruction.
+        const nativeContent: any = await pdfPage.getTextContent();
+        const nativeText = (nativeContent.items || []).map((item: any) => item.str || '').join(' ').trim();
+        if (nativeText.replace(/\\s/g, '').length >= 12) {
+          setOcrProgress(Math.round(pageNumber / pdf.numPages * 100));
+          continue;
+        }
         const baseViewport = pdfPage.getViewport({ scale: 1 });
         const safeScale = Math.min(ocrScale, 4200 / Math.max(baseViewport.width, baseViewport.height));
         const viewport = pdfPage.getViewport({ scale: Math.max(1.5, safeScale) });
@@ -1229,6 +1253,7 @@ export default function App() {
       setOriginalOcrUrl(old => { if (old) URL.revokeObjectURL(old); return originalUrl; });
       setOcrCompareMode(true);
       const editableFile = new File([editableBlob], document.file.name.replace(/\\.pdf$/i, '') + '-OCR-Editable.pdf', { type: 'application/pdf' });
+      autoOcrOutputFileRef.current = editableFile;
       await openPdf(editableFile);
       // openPdf resets document-specific state. Restore the OCR word map and
       // install stable hit targets for every page after opening the rebuilt PDF.
