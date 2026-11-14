@@ -1104,10 +1104,11 @@ export default function App() {
         // Keep individual word boxes, not only whole-line boxes. Their x/y/width
         // coordinates preserve the OCR-detected word positions and inter-word gaps.
         const recognizedWords = (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 20);
+        const ocrPixels = context.getImageData(0, 0, canvas.width, canvas.height);
         const hasCleanPaperBehind = (box: any) => {
           // Sample outside the glyph box: rebuild only light, low-variation paper.
           // Coloured/photo regions (stamps, signatures, logos) stay untouched.
-          const image = context.getImageData(0, 0, canvas.width, canvas.height);
+          const image = ocrPixels;
           const x0=Math.max(0,Math.floor(box.x0)), x1=Math.min(canvas.width-1,Math.ceil(box.x1));
           const y0=Math.max(0,Math.floor(box.y0)), y1=Math.min(canvas.height-1,Math.ceil(box.y1));
           const pad=Math.max(2,Math.round((y1-y0)*.16)), samples:number[][]=[];
