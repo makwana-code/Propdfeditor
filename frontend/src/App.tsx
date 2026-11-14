@@ -348,18 +348,7 @@ export default function App() {
     return () => URL.revokeObjectURL(url);
   }, [document]);
 
-  useEffect(() => {
-    if (!document) return;
-    // OCR every newly uploaded document automatically. Native-text PDFs are
-    // inspected page-by-page by runOcr and left intact; scanned pages are rebuilt.
-    if (autoOcrOutputFileRef.current === document.file) {
-      autoOcrOutputFileRef.current = null;
-      return;
-    }
-    if (autoOcrStartedFileRef.current === document.file) return;
-    autoOcrStartedFileRef.current = document.file;
-    void runOcr();
-  }, [document]);
+  // OCR is intentionally user-triggered from the OCR panel; opening a PDF never starts it.
 
   useEffect(() => {
     if (!supabase) return;
@@ -748,15 +737,23 @@ export default function App() {
         return;
       }
 
-      if (command && event.key.toLowerCase() === 'c' && !isTyping && selectedId) {
-        if (copySelectedAnnotation()) { event.preventDefault(); return; }
+      // Text-box clipboard shortcuts take priority when a box is selected.
+      // Escape exits text-entry mode so arrows/Delete operate on the whole box.
+      if (event.key === 'Escape' && selectedId && editingTextId) {
+        event.preventDefault();
+        setEditingTextId(null);
+        setStatus('Text box selected. Arrow keys move it; Delete removes it.');
+        return;
       }
-      if (command && event.key.toLowerCase() === 'v' && !isTyping && copiedAnnotationRef.current) {
-        event.preventDefault(); pasteCopiedAnnotation(); return;
+      if (command && event.key.toLowerCase() === 'c' && selectedId && (!isTyping || target?.closest('.pdf-annotation'))) {
+        if (copySelectedAnnotation()) { event.preventDefault(); event.stopPropagation(); return; }
+      }
+      if (command && event.key.toLowerCase() === 'v' && copiedAnnotationRef.current && (!isTyping || target?.closest('.pdf-annotation'))) {
+        event.preventDefault(); event.stopPropagation(); pasteCopiedAnnotation(); return;
       }
 
-      // Delete removes the currently selected editor object, not characters
-      // from a text field. Original PDF text edits are represented as objects.
+      // While a textarea is actively being edited, arrow/Delete retain normal
+      // caret behaviour. Press Escape once to select the complete text box.
       if (!isTyping && selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
         event.preventDefault();
         const step = event.shiftKey ? 0.01 : 0.004;
@@ -783,7 +780,7 @@ export default function App() {
       window.removeEventListener('keydown', onKey);
       window.removeEventListener('wheel', onPdfWheel, true);
     };
-  }, [selectedId, document, busy, annotations, comments, strokes, ocrWords]);
+  }, [selectedId, editingTextId, document, busy, annotations, comments, strokes, ocrWords]);
 
   useEffect(() => {
     function moveResize(event: PointerEvent) {
@@ -1708,29 +1705,31 @@ export default function App() {
         anchor.style.position = 'fixed';
         anchor.style.left = '-10000px';
         window.document.body.appendChild(anchor);
-        // Delayed synthetic clicks are blocked by Chromium after async PDF generation.
-        // Keep this real anchor for the user's explicit click in the status bar.
+        // Trigger the standard browser download so the file appears in the
+        // browser Downloads list/shelf, while retaining the retry link as backup.
+        anchor.click();
         anchor.remove();
-        // Keep URL available for a manual retry if the browser blocks automatic download.
-        // Keep the retry URL alive until the user starts the manual download.
+        window.setTimeout(() => URL.revokeObjectURL(url), 120000);
       }
       // Make the committed PDF the new editor source; subsequent saves must not
       // replay edits against the original, unmodified bytes.
       const committedBytes = pdfBuffer.slice(0);
       const committedFile = new File([pdfBlob], document.file.name, { type: 'application/pdf' });
       setDocument({ file: committedFile, bytes: committedBytes, pages: pdf.getPageCount() });
-      if (savedToFile || downloadFallback || !saveHandle) {
+      if (savedToFile || !saveToFile) {
         setAnnotations([]);
         setEditingTextId(null);
         setComments([]);
         setStrokes([]);
         setOcrWords({});
         setOcrPages({});
+        setSearchHighlights([]);
+        setSearchResults([]);
         setSelectedId(null);
       }
       setStatus(savedToFile
         ? 'Edited PDF saved successfully as ' + downloadName + ' (' + Math.round(pdfBlob.size / 1024) + ' KB).'
-        : 'PDF ready: ' + downloadName + ' (' + pdfBlob.size.toLocaleString() + ' bytes). Click Download ready to save it.');
+        : 'Download started: ' + downloadName + ' (' + pdfBlob.size.toLocaleString() + ' bytes). Check your browser Downloads list.');
 
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'PDF export failed.');
