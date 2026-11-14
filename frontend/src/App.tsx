@@ -309,7 +309,7 @@ export default function App() {
   const pageDragRef = useRef<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState('Open a PDF to start editing.');
-  const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'>('pages');
+  const [activePanel, setActivePanel] = useState<'pages'|'bookmarks'|'outline'|'search'|'history'>('pages');
   const [showLeftPanel, setShowLeftPanel] = useState(true);
   const [showRightPanel, setShowRightPanel] = useState(true);
   const [leftPanelWidth, setLeftPanelWidth] = useState(194);
