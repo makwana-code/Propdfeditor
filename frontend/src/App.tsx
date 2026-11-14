@@ -752,10 +752,12 @@ export default function App() {
         event.preventDefault(); event.stopPropagation(); pasteCopiedAnnotation(); return;
       }
 
-      // While a textarea is actively being edited, arrow/Delete retain normal
-      // caret behaviour. Press Escape once to select the complete text box.
-      if (!isTyping && selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
+      // The selected PDF text box is the keyboard target, even when its
+      // textarea has focus. Arrow keys nudge the whole box; Delete removes it.
+      // Use Ctrl+Arrow for caret navigation while editing text.
+      if (selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && (!isTyping || event.altKey || event.shiftKey)) {
         event.preventDefault();
+        event.stopPropagation();
         const step = event.shiftKey ? 0.01 : 0.004;
         const dx = event.key === 'ArrowLeft' ? -step : event.key === 'ArrowRight' ? step : 0;
         const dy = event.key === 'ArrowUp' ? -step : event.key === 'ArrowDown' ? step : 0;
@@ -763,12 +765,13 @@ export default function App() {
         return;
       }
 
-      if (event.key === 'Delete' && !isTyping && selectedId && !busy) {
+      if (event.key === 'Delete' && selectedId && !busy && (!isTyping || editingTextId === selectedId)) {
         event.preventDefault();
+        event.stopPropagation();
         setAnnotations(old => old.filter(a => a.id !== selectedId));
         setSelectedId(null);
         setEditingTextId(null);
-        setStatus('Selected text or object deleted.');
+        setStatus('Selected text box deleted.');
         return;
       }
 
@@ -1575,7 +1578,20 @@ export default function App() {
         if (annotation.coverOriginal) {
           const mask = annotation.maskColor || '#ffffff';
           const maskRgb = rgb(parseInt(mask.slice(1,3),16)/255, parseInt(mask.slice(3,5),16)/255, parseInt(mask.slice(5,7),16)/255);
-          target.drawRectangle({x:x-0.35,y:height-top-annotation.h*height-0.35,width:annotation.w*width+0.7,height:annotation.h*height+0.7,color:maskRgb,borderWidth:0});
+          // For in-place edits, mask only the original glyph bounds. The edit
+          // textarea may grow wider, but its white background must never erase
+          // table borders or neighbouring cells in the exported PDF.
+          if (annotation.sourceHitId && annotation.sourceRect) {
+            const r = annotation.sourceRect;
+            const pad = 0.35;
+            const left = r.x0 * width + pad;
+            const right = r.x1 * width - pad;
+            const bottom = height - r.y1 * height + pad;
+            const topEdge = height - r.y0 * height - pad;
+            target.drawRectangle({x:left,y:bottom,width:Math.max(0,right-left),height:Math.max(0,topEdge-bottom),color:maskRgb,borderWidth:0});
+          } else {
+            target.drawRectangle({x:x-0.35,y:height-top-annotation.h*height-0.35,width:annotation.w*width+0.7,height:annotation.h*height+0.7,color:maskRgb,borderWidth:0});
+          }
         }
         const size = annotation.size;
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
