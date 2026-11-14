@@ -23,6 +23,11 @@ def rect_distance(a, b):
     return abs(a.x0 - b.x0) + abs(a.y0 - b.y0)
 
 
+def rect_area(rect):
+    # Compatible with PyMuPDF Rect versions without get_area().
+    return max(0.0, rect.width) * max(0.0, rect.height)
+
+
 def resolve_original_text(page, old_text, target):
     """Resolve a PDF.js hit against native PDF text, even across span splits."""
     wanted = clean_text(old_text)
@@ -81,7 +86,7 @@ def resolve_original_text(page, old_text, target):
                         continue
                     overlap = candidate_rect & target
                     # Ignore incidental glyph touches at the edge of a hit box.
-                    if overlap.get_area() < min(candidate_rect.get_area(), target.get_area()) * 0.12:
+                    if rect_area(overlap) < min(rect_area(candidate_rect), rect_area(target)) * 0.12:
                         continue
                     selected_spans.append((candidate_rect, candidate_span))
                 if selected_spans:
@@ -115,7 +120,7 @@ def resolve_original_text(page, old_text, target):
                     candidate_rect = fitz.Rect(candidate_span.get("bbox", (0, 0, 0, 0)))
                     if candidate_rect.intersects(chosen):
                         overlap = candidate_rect & chosen
-                        nearest.append((-(overlap.get_area()), rect_distance(candidate_rect, chosen), candidate_span))
+                        nearest.append((-rect_area(overlap), rect_distance(candidate_rect, chosen), candidate_span))
         if nearest:
             nearest.sort(key=lambda item: (item[0], item[1]))
             span = nearest[0][2]
