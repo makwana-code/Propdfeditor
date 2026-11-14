@@ -1501,29 +1501,47 @@ export default function App() {
     setBusy(true);
     try {
       let sourceBytes = document.bytes.slice(0);
+      let nativeEditsApplied = false;
       const originalEdits = annotations.filter(item => item.coverOriginal && item.sourceRect && item.originalText && !item.ocrRebuilt);
       if (originalEdits.length) {
-        setStatus('Replacing original PDF text content…');
-        const form = new FormData();
-        form.append('file', new Blob([sourceBytes], { type: 'application/pdf' }), document.file.name);
-        form.append('edits', JSON.stringify(originalEdits.map(item => ({
-          page: item.page,
-          originalText: item.originalText,
-          text: item.text,
-          rect: item.sourceRect,
-          box: { x0: item.x, y0: item.y, x1: item.x + item.w, y1: item.y + item.h },
-          size: item.size,
-          color: parseInt(item.color.replace('#',''), 16),
-          font: item.font,
-          bold: !!item.bold,
-          italic: !!item.italic
-        }))));
-        const response = await fetch('/api/edit-original-text', { method: 'POST', body: form });
-        if (!response.ok) {
-          const failure = await response.json().catch(() => ({ error: 'Native PDF text editing failed.' }));
-          throw new Error(failure.error || 'Native PDF text editing failed.');
+        // Try the optional native-text endpoint when it is deployed. On the
+        // static Vercel frontend this route may be rewritten to index.html;
+        // detect that and continue with the in-browser whiteout + replacement.
+        try {
+          setStatus('Preparing original text replacement…');
+          const form = new FormData();
+          form.append('file', new Blob([sourceBytes], { type: 'application/pdf' }), document.file.name);
+          form.append('edits', JSON.stringify(originalEdits.map(item => ({
+            page: item.page,
+            originalText: item.originalText,
+            text: item.text,
+            rect: item.sourceRect,
+            box: { x0: item.x, y0: item.y, x1: item.x + item.w, y1: item.y + item.h },
+            size: item.size,
+            color: parseInt(item.color.replace('#',''), 16),
+            font: item.font,
+            bold: !!item.bold,
+            italic: !!item.italic
+          }))));
+          const response = await fetch('/api/edit-original-text', { method: 'POST', body: form });
+          const contentType = response.headers.get('content-type') || '';
+          if (!response.ok || !contentType.toLowerCase().includes('application/pdf')) {
+            const failure = contentType.toLowerCase().includes('application/json')
+              ? await response.json().catch(() => ({}))
+              : {};
+            throw new Error(failure.error || 'Native editing service is unavailable.');
+          }
+          const candidate = await response.arrayBuffer();
+          if (candidate.byteLength < 100 || new TextDecoder().decode(new Uint8Array(candidate, 0, 5)) !== '%PDF-') {
+            throw new Error('Native editing service returned an invalid PDF.');
+          }
+          sourceBytes = candidate;
+          nativeEditsApplied = true;
+        } catch (nativeError) {
+          // Keep the original PDF bytes. The PDF-lib export loop below masks
+          // the source text and draws the edited text so Download still works.
+          setStatus('Using browser-based text replacement…');
         }
-        sourceBytes = await response.arrayBuffer();
       }
       const pdf = await PDFDocument.load(sourceBytes);
       pdf.registerFontkit(fontkit);
@@ -1538,8 +1556,9 @@ export default function App() {
         // drawn again: the original PDF glyphs remain untouched until the user
         // types a replacement or actually drags the text to a new position.
         if (annotation.sourceHitId && !annotation.coverOriginal) continue;
-        // Original text has already been removed and reinserted by the native PDF engine.
-        if (annotation.coverOriginal && !annotation.ocrRebuilt) continue;
+        // Skip drawing only when the native endpoint really returned a valid PDF.
+        // Otherwise the client-side mask and replacement below handle this edit.
+        if (annotation.coverOriginal && !annotation.ocrRebuilt && nativeEditsApplied) continue;
         const target = pdf.getPage(annotation.page - 1);
         const { width, height } = target.getSize();
         const fontKey = annotation.font + ':' + (annotation.bold ? 'b' : '') + (annotation.italic ? 'i' : '');
