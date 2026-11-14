@@ -1178,12 +1178,12 @@ export default function App() {
         }
         for (const line of lines) {
           line.sort((a,b)=>a.x-b.x);
-          const lineIsRebuildable = line.every(word => word.cleanBackground && /^[\\x20-\\x7E]+$/.test(word.text));
+          const lineIsRebuildable = line.every(word => word.cleanBackground && /^[\x20-\x7E]+$/.test(word.text));
           if (!lineIsRebuildable) {
             // Keep mixed artwork, handwriting, coloured backgrounds and non-Latin
             // glyphs untouched; add an invisible searchable layer where supported.
             for (const word of line) {
-              if (/^[\\x20-\\x7E]+$/.test(word.text)) {
+              if (/^[\x20-\x7E]+$/.test(word.text)) {
                 const x=word.x*width, yTop=height-word.y*height, boxHeight=word.h*height;
                 const size=Math.max(4,Math.min(42,boxHeight*.78));
                 target.drawText(word.text,{x,y:yTop-boxHeight+size*.08,size,font:editableOcrFont,color:rgb(0,0,0),opacity:0});
