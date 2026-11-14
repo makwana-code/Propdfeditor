@@ -535,15 +535,14 @@ export default function App() {
           }
           flush();
         }
-        if (!cancelled && ocrWords[page]?.length) {
-          // Prefer the OCR word geometry from the original scan. The rebuilt PDF's
-          // text extraction can merge words or shift hitboxes, making OCR text
-          // appear selectable but impossible to target reliably for editing.
-          setTextHits(ocrWords[page].map((word, index) => ({
+        if (!cancelled && (hits.length || ocrWords[page]?.length)) {
+          // Keep native PDF text hit targets AND OCR word targets on mixed pages.
+          const recognized = (ocrWords[page] || []).map((word, index) => ({
             id: 'ocr-' + page + '-' + index, page, text: word.text,
             x: word.x, y: word.y, w: word.w, h: word.h,
             fontSize: Math.max(7, Math.min(24, word.h * viewport.height * 0.72 / Math.max(.01, viewport.scale)))
-          })));
+          }));
+          setTextHits([...hits, ...recognized]);
         } else if (!cancelled && hits.length) {
           setTextHits(hits);
         } else if (!cancelled) {
@@ -613,10 +612,9 @@ export default function App() {
         }
         if (!cancelled) {
           // Scanned pages still get selectable word targets when OCR has already been run.
-          const embeddedPages = new Set(allHits.map(hit => hit.page));
+          // Include OCR word targets even on mixed pages that already contain native text.
           Object.entries(ocrWords).forEach(([pageKey, words]) => {
             const pageNumber = Number(pageKey);
-            if (embeddedPages.has(pageNumber)) return;
             words.forEach((word, index) => allHits.push({ id:'ocr-'+pageNumber+'-'+index, page:pageNumber, text:word.text, x:word.x, y:word.y, w:word.w, h:word.h, fontSize:Math.max(7, Math.min(24, word.h * (pageMetricsRef.current.get(pageNumber)?.height || 700) * .72 / Math.max(.01, pageMetricsRef.current.get(pageNumber)?.scale || 1))) }));
           });
           setContinuousHits(allHits);
@@ -1066,10 +1064,17 @@ export default function App() {
         return await task.promise;
       })();
       const { createWorker } = await import('tesseract.js');
-      worker = await createWorker(ocrLanguage);
+      worker = await createWorker(ocrLanguage, 1, {
+        logger: (message: any) => {
+          if (message.status === 'recognizing text' && Number.isFinite(message.progress)) {
+            const overall = Math.round(((ocrProgress / 100) + message.progress / Math.max(1, pdf.numPages)) * 100);
+            setStatus('OCR running · page ' + Math.min(pdf.numPages, Math.floor(ocrProgress / 100 * pdf.numPages) + 1) + ' of ' + pdf.numPages + ' · ' + Math.min(99, overall) + '%');
+          }
+        }
+      });
       await worker.setParameters({
         preserve_interword_spaces: '1',
-        tessedit_pageseg_mode: '6',
+        tessedit_pageseg_mode: '11',
         user_defined_dpi: '300'
       });
       const extracted: Record<number,string> = {};
@@ -1084,7 +1089,7 @@ export default function App() {
         // text, while image-only scanned pages get OCR reconstruction.
         const nativeContent: any = await pdfPage.getTextContent();
         const nativeText = (nativeContent.items || []).map((item: any) => item.str || '').join(' ').trim();
-        if (nativeText.replace(/\\s/g, '').length >= 12) {
+        if (nativeText.replace(/\s/g, '').length >= 12) {
           // OCR mixed-content pages too: native text remains the authoritative
           // searchable layer, while OCR catches text embedded in page images.
           nativeTextPages.add(pageNumber);
@@ -1159,12 +1164,14 @@ export default function App() {
       setOcrWords(old => ({ ...old, ...positionedWords }));
       // Make OCR words immediately clickable in Edit Text on the current scanned page.
       // Do not replace embedded PDF text hitboxes on pages that already have selectable text.
-      if (!textHits.some(hit => hit.page === page) && positionedWords[page]?.length) {
+      if (positionedWords[page]?.length) {
         const currentWords = positionedWords[page];
-        setTextHits(currentWords.map((word,index) => ({
+        const nativeHits = textHits.filter(hit => hit.page === page && !hit.id.startsWith('ocr-'));
+        const recognizedHits = currentWords.map((word,index) => ({
           id:'ocr-'+page+'-'+index, page, text:word.text, x:word.x, y:word.y,
           w:word.w, h:word.h, fontSize:Math.max(7,Math.min(24,word.h*(pageSizeRef.current.height||700)*0.72/Math.max(0.01,fitZoom*zoom/100)))
-        })));
+        }));
+        setTextHits([...nativeHits, ...recognizedHits]);
         setStatus('OCR ready. Recognized words on this page are now clickable in Edit Text.');
       }
       const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
@@ -1253,7 +1260,9 @@ export default function App() {
       })));
       setPage(1);
       setActivePanel('ocr');
-      setStatus('OCR complete. Rebuilt text is visible and editable on clean paper; artwork regions were preserved. Edit recognized text on the right.');
+      setSearchHighlights([]);
+      setSearchResults(found);
+      setStatus('OCR complete: '+Object.keys(extracted).length+' pages recognized, '+Object.values(positionedWords).reduce((n,words)=>n+words.length,0)+' text regions indexed. Search text or click recognized words to edit.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
@@ -1268,7 +1277,7 @@ export default function App() {
       return;
     }
     const query = searchQuery.trim().toLocaleLowerCase();
-    const tokens = query.split(/\\s+/).filter(Boolean);
+    const tokens = query.split(/\s+/).filter(Boolean);
     const results: Array<{page:number;text:string}> = [];
     const highlights: PdfTextHit[] = [];
     setBusy(true);
@@ -1306,7 +1315,7 @@ export default function App() {
         // token. A phrase can span line breaks; token-level matching still finds
         // and highlights all of its words.
         words.forEach((word,index) => {
-          const value=word.text.toLocaleLowerCase().replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu,'');
+          const value=word.text.toLocaleLowerCase().replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu,'');
           if (!tokens.some(token => value===token || value.includes(token))) return;
           highlights.push({id:'search-ocr-'+pageNumber+'-'+index,page:pageNumber,text:word.text,x:word.x,y:word.y,w:word.w,h:word.h,fontSize:Math.max(7,word.h*viewport.height*.72)});
         });
