@@ -1072,6 +1072,9 @@ export default function App() {
 
   async function runOcr() {
     if (!document) { setStatus('Open a PDF before running OCR.'); return; }
+    // Open a tab immediately from the button gesture so the browser does not block it later.
+    const ocrTab = window.open('about:blank', '_blank');
+    if (ocrTab) { ocrTab.document.title = 'Preparing editable OCR PDF…'; ocrTab.document.body.innerHTML = '<p style="font:16px Arial;padding:24px">OCR is processing. This tab will show the editable PDF when conversion finishes.</p>'; }
     setBusy(true);
     let worker: any = null;    try {
       const pdf = pdfRef.current || await (async () => {
@@ -1099,18 +1102,19 @@ export default function App() {
         const result: any = await worker.recognize(canvas);
         const text = result.data.text.trim();
         if (text) extracted[pageNumber] = text;
-        const lines = (result.data.lines || []).filter((line: any) => line.text?.trim() && line.confidence >= 20);
-        const words: OcrWord[] = lines.length ? lines.map((line: any) => ({
-          text: line.text.trim(),
-          x: Math.max(0, Math.min(1, line.bbox.x0 / viewport.width)),
-          y: Math.max(0, Math.min(1, line.bbox.y0 / viewport.height)),
-          w: Math.max(.004, Math.min(1, (line.bbox.x1 - line.bbox.x0) / viewport.width)),
-          h: Math.max(.008, Math.min(1, (line.bbox.y1 - line.bbox.y0) / viewport.height))
-        })) : (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 20).map((word: any) => ({
+        // Keep individual word boxes, not only whole-line boxes. Their x/y/width
+        // coordinates preserve the OCR-detected word positions and inter-word gaps.
+        const recognizedWords = (result.data.words || []).filter((word: any) => word.text?.trim() && word.confidence >= 20);
+        const words: OcrWord[] = recognizedWords.length ? recognizedWords.map((word: any) => ({
           text: word.text.trim(), x: Math.max(0, Math.min(1, word.bbox.x0 / viewport.width)),
           y: Math.max(0, Math.min(1, word.bbox.y0 / viewport.height)),
           w: Math.max(.004, Math.min(1, (word.bbox.x1 - word.bbox.x0) / viewport.width)),
           h: Math.max(.008, Math.min(1, (word.bbox.y1 - word.bbox.y0) / viewport.height))
+        })) : (result.data.lines || []).filter((line: any) => line.text?.trim() && line.confidence >= 20).map((line: any) => ({
+          text: line.text.trim(), x: Math.max(0, Math.min(1, line.bbox.x0 / viewport.width)),
+          y: Math.max(0, Math.min(1, line.bbox.y0 / viewport.height)),
+          w: Math.max(.004, Math.min(1, (line.bbox.x1 - line.bbox.x0) / viewport.width)),
+          h: Math.max(.008, Math.min(1, (line.bbox.y1 - line.bbox.y0) / viewport.height))
         }));
         if (words.length) positionedWords[pageNumber] = words;
         setOcrProgress(Math.round(pageNumber / pdf.numPages * 100));
@@ -1133,7 +1137,42 @@ export default function App() {
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
       setActivePanel('ocr');
-      setStatus('OCR conversion complete. Text is searchable and each recognized line can be selected and edited; original scanned pages, dimensions and graphics remain as the visual background. Download to create the OCR-enabled PDF.');
+      setStatus('OCR words and spacing detected. Building a separate editable PDF…');
+      // Create a NEW PDF from the original pages: page dimensions and the scanned
+      // visual layer remain intact, while every recognized word gets its own
+      // invisible, positioned text object. The text is searchable/selectable and
+      // can be opened in ProPDF Studio for in-place editing.
+      const editablePdf = await PDFDocument.load(document.bytes.slice(0));
+      const editableOcrFont = await editablePdf.embedFont(StandardFonts.Helvetica);
+      for (const [pageNumber, words] of Object.entries(positionedWords)) {
+        const target = editablePdf.getPage(Number(pageNumber) - 1);
+        const { width, height } = target.getSize();
+        for (const word of words) {
+          if (!word.text || word.w <= 0 || word.h <= 0) continue;
+          const size = Math.max(3, Math.min(48, word.h * height * 0.82));
+          target.drawText(word.text, {
+            x: word.x * width,
+            y: height - (word.y + word.h) * height + size * 0.08,
+            size,
+            font: editableOcrFont,
+            opacity: 0,
+            maxWidth: Math.max(1, word.w * width * 1.15)
+          });
+        }
+      }
+      const editableBytes = await editablePdf.save({ useObjectStreams: false });
+      if (!editableBytes || editableBytes.byteLength < 100) throw new Error('OCR PDF generation failed. The original PDF is unchanged.');
+      const editableBuffer = new ArrayBuffer(editableBytes.byteLength);
+      new Uint8Array(editableBuffer).set(editableBytes);
+      const editableBlob = new Blob([editableBuffer], { type: 'application/pdf' });
+      if (editableBlob.size !== editableBytes.byteLength) throw new Error('The new OCR PDF failed its file-size check.');
+      const editableUrl = URL.createObjectURL(editableBlob);
+      if (ocrTab && !ocrTab.closed) {
+        ocrTab.location.replace(editableUrl);
+      } else {
+        setStatus('OCR PDF is ready, but the browser blocked the new tab. Allow pop-ups and run OCR again to open it automatically.');
+      }
+      setStatus('New OCR PDF created and opened in a new tab. Word positions and gaps are preserved as selectable OCR text; the original scan, page sizes, lines and borders remain as the background. Open this PDF in ProPDF Studio to edit recognized text.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
@@ -1724,7 +1763,7 @@ export default function App() {
         <button className={activePanel==='outline'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('outline')}>☷<span>Outline</span></button>
         <button className={activePanel==='search'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('search')}>⌕<span>Search</span></button>
         <button className={activePanel==='history'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('history')}>↶<span>History</span></button>
-        <button className={activePanel==='ocr'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('ocr')}>文<span>OCR</span></button>
+        <button className={activePanel==='ocr'?'side-tab active':'side-tab'} type="button" disabled={!document} onClick={()=>setActivePanel('ocr')}><svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M4 8V5a1 1 0 0 1 1-1h3M16 4h3a1 1 0 0 1 1 1v3M20 16v3a1 1 0 0 1-1 1h-3M8 20H5a1 1 0 0 1-1-1v-3"/><path d="M7 9h10v6H7zM9 12h6"/></svg><span>OCR</span></button>
       </aside>
 
       <aside className="studio-thumbnails" aria-label="PDF navigation panel"><div className="panel-heading-control"><b>Navigation</b><button className="panel-inline-toggle" type="button" title="Hide left panel" aria-label="Hide left panel" onClick={()=>setShowLeftPanel(false)}>◧</button></div>
@@ -1733,7 +1772,7 @@ export default function App() {
         {activePanel==='outline' && <div className="nav-results"><b>Document outline</b>{bookmarks.length?bookmarks.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}>{item.title}<small>Page {item.page}</small></button>):<p>This PDF does not contain a built-in outline. Use Search to find headings and topics across all pages.</p>}</div>}
         {activePanel==='search' && <div className="nav-results search-panel"><b>Find in document</b><div className="search-inline"><input value={searchQuery} onChange={e=>setSearchQuery(e.target.value)} onKeyDown={e=>{if(e.key==='Enter')void runSearch()}} placeholder="Search text…"/><button onClick={()=>void runSearch()} disabled={busy}>Find</button></div>{searchResults.map((item,i)=><button key={i} onClick={()=>setPage(item.page)}><span>{item.text}</span><small>Page {item.page}</small></button>)}{searchResults.length===0&&<p>Enter a word or phrase and select Find.</p>}</div>}
         {activePanel==='history' && <div className="nav-results edit-history-panel"><div className="history-heading"><b>Edit History</b><button type="button" disabled={!historyItems.length} onClick={()=>{setHistoryItems([]);setStatus('Edit history list cleared. Current PDF edits are unchanged.');}}>Clear list</button></div><p>Choose a previous step to restore that version. Deleting an entry only removes it from this history list.</p>{historyItems.slice().reverse().map(item=><div className="history-item" key={item.id}><div><b>{item.label}</b><small>{new Date(item.createdAt).toLocaleTimeString()}</small></div><button type="button" onClick={()=>restoreHistoryItem(item)}>Restore</button><button type="button" aria-label={'Delete '+item.label+' from history'} onClick={()=>setHistoryItems(old=>old.filter(entry=>entry.id!==item.id))}>×</button></div>)}{!historyItems.length&&<p>No history entries yet.</p>}</div>}
-        {activePanel==='ocr' && <div className="nav-results ocr-panel"><b>Scanned PDF OCR</b><p>Convert scanned pages into searchable text with editable line targets. The original page image, page size, tables, borders and graphics remain unchanged underneath.</p><label className="ocr-field">OCR language<select value={ocrLanguage} disabled={busy} onChange={event=>setOcrLanguage(event.target.value)}><option value="eng">English</option><option value="hin">Hindi</option><option value="guj">Gujarati</option><option value="eng+hin">English + Hindi</option><option value="eng+guj">English + Gujarati</option><option value="eng+hin+guj">English + Hindi + Gujarati</option></select></label><label className="ocr-field">Recognition quality<select value={ocrScale} disabled={busy} onChange={event=>setOcrScale(Number(event.target.value))}><option value={2}>Standard (2×)</option><option value={2.5}>High (2.5×)</option><option value={3}>Very High (3×)</option></select></label><button type="button" className="ocr-run-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'Run OCR & Create Editable Layer'}</button>{busy&&<div className="ocr-progress"><div><span>OCR progress</span><b>{ocrProgress}%</b></div><div className="ocr-progress-track"><i style={{width:ocrProgress+'%'}}/></div></div>}<p>{Object.keys(ocrWords).length} page(s) have OCR text. Click a recognized line in the page to edit it. Use Download to save the OCR-enabled PDF.</p></div>}
+        {activePanel==='ocr' && <div className="nav-results ocr-panel"><b>Scanned PDF OCR</b><p>Scan and recognize every word with its exact position and gap. After processing, ProPDF creates a separate searchable, selectable OCR PDF in a new tab. The original scan, page size, lines, tables and borders remain as the visual background.</p><label className="ocr-field">OCR language<select value={ocrLanguage} disabled={busy} onChange={event=>setOcrLanguage(event.target.value)}><option value="eng">English</option><option value="hin">Hindi</option><option value="guj">Gujarati</option><option value="eng+hin">English + Hindi</option><option value="eng+guj">English + Gujarati</option><option value="eng+hin+guj">English + Hindi + Gujarati</option></select></label><label className="ocr-field">Recognition quality<select value={ocrScale} disabled={busy} onChange={event=>setOcrScale(Number(event.target.value))}><option value={2}>Standard (2×)</option><option value={2.5}>High (2.5×)</option><option value={3}>Very High (3×)</option></select></label><button type="button" className="ocr-run-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'Scan & Create Editable PDF'}</button>{busy&&<div className="ocr-progress"><div><span>OCR progress</span><b>{ocrProgress}%</b></div><div className="ocr-progress-track"><i style={{width:ocrProgress+'%'}}/></div></div>}<p>{Object.keys(ocrWords).length} page(s) have OCR text. Each recognized word is positioned separately so spaces and line alignment are retained. Open the new PDF in ProPDF Studio to edit the recognized text.</p></div>}
       </aside>
       <div className="panel-resizer left-resizer" role="separator" aria-orientation="vertical" aria-label="Resize navigation panel" title="Drag to resize navigation panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('left')}} />
       </>}
