@@ -756,7 +756,7 @@ export default function App() {
       // The selected PDF text box is the keyboard target, even when its
       // textarea has focus. Arrow keys nudge the whole box; Delete removes it.
       // Use Ctrl+Arrow for caret navigation while editing text.
-      if (selectedId && !busy && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && (!isTyping || !command)) {
+      if (selectedId && !busy && !isTyping && editingTextId !== selectedId && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
         event.preventDefault();
         event.stopPropagation();
         const step = event.shiftKey ? 0.01 : 0.004;
@@ -766,7 +766,7 @@ export default function App() {
         return;
       }
 
-      if (event.key === 'Delete' && selectedId && !busy && (!isTyping || editingTextId === selectedId)) {
+      if (event.key === 'Delete' && selectedId && !busy && !isTyping && editingTextId !== selectedId) {
         event.preventDefault();
         event.stopPropagation();
         setAnnotations(old => old.filter(a => a.id !== selectedId));
@@ -1282,74 +1282,55 @@ export default function App() {
       return;
     }
     const query = searchQuery.trim().toLocaleLowerCase();
-    const queryTokens = query.split(/\\s+/).filter(Boolean);
+    const tokens = query.split(/\\s+/).filter(Boolean);
     const results: Array<{page:number;text:string}> = [];
     const highlights: PdfTextHit[] = [];
     setBusy(true);
     try {
-      const pdf = pdfRef.current || await (async () => {
-        const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
-        return await task.promise;
-      })();
+      const loading = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
+      const pdf = await loading.promise;
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         const pdfPage = await pdf.getPage(pageNumber);
         const content = await pdfPage.getTextContent();
-        const nativeItems = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim());
-        const embeddedText = nativeItems.map(item => item.str || '').join(' ');
-        const pageOcrText = ocrPages[pageNumber] || '';
-        const pageOcrWords = ocrWords[pageNumber] || [];
-        const combinedText = [embeddedText, pageOcrText || pageOcrWords.map(word => word.text).join(' ')].filter(Boolean).join(' ');
-        const lower = combinedText.toLocaleLowerCase();
-        const at = lower.indexOf(query);
-        let pageMatched = at >= 0;
-        if (pageMatched) {
-          results.push({ page:pageNumber, text:combinedText.slice(Math.max(0,at-65), Math.min(combinedText.length,at+query.length+100)) });
-        }
+        const nativeItems = (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform));
+        const nativeText = nativeItems.map(item => item.str).join(' ');
+        const words = ocrWords[pageNumber] || [];
+        const ocrText = ocrPages[pageNumber] || words.map(word => word.text).join(' ');
+        const searchable = (nativeText + ' ' + ocrText).toLocaleLowerCase();
+        const pageHasMatch = tokens.every(token => searchable.includes(token));
+        if (!pageHasMatch) continue;
+        const source = nativeText || ocrText;
+        const at = source.toLocaleLowerCase().indexOf(query);
+        const tokenAt = tokens.map(token => source.toLocaleLowerCase().indexOf(token)).filter(index => index >= 0);
+        const snippetAt = at >= 0 ? at : (tokenAt.length ? Math.min(...tokenAt) : 0);
+        results.push({page:pageNumber,text:source.slice(Math.max(0,snippetAt-70),Math.min(source.length,snippetAt+Math.max(query.length,100)))});
         const viewport = pdfPage.getViewport({scale:1});
-        // Native PDF text: highlight each matching text run, including individual
-        // runs that form a phrase across adjacent PDF text objects.
+        // Highlight every matching native text run. This supports phrases split
+        // across PDF text objects and multi-word searches without requiring a
+        // phrase to live inside one PDF drawing command.
         nativeItems.forEach((item,index) => {
-          if (!item.str.toLocaleLowerCase().includes(query) && queryTokens.length === 1 && !item.str.toLocaleLowerCase().includes(queryTokens[0])) return;
-          if (queryTokens.length > 1 && !item.str.toLocaleLowerCase().includes(query)) return;
-          const m=pdfjs.Util.transform(viewport.transform,item.transform);
-          const h=Math.max(3,Math.hypot(m[2],m[3]));
-          const w=Math.max(4,Number(item.width)||item.str.length*h*.45);
+          const value = String(item.str || '').toLocaleLowerCase();
+          if (!tokens.some(token => value.includes(token))) return;
+          const m = pdfjs.Util.transform(viewport.transform,item.transform);
+          const h = Math.max(3,Math.hypot(m[2],m[3]));
+          const w = Math.max(4,Number(item.width)||String(item.str).length*h*.45);
           highlights.push({id:'search-native-'+pageNumber+'-'+index,page:pageNumber,text:item.str,x:Math.max(0,m[4]/viewport.width),y:Math.max(0,(m[5]-h)/viewport.height),w:Math.min(1,w/viewport.width),h:Math.min(1,h/viewport.height),fontSize:h});
-          pageMatched = true;
         });
-        // OCR-only scanned pages have no native text objects to highlight.
-        // Match one or more adjacent recognized words and paint each exact word
-        // box so the search result is visibly highlighted on the scanned page.
-        if (pageOcrWords.length) {
-          const normalizedWords = pageOcrWords.map(word => word.text.toLocaleLowerCase());
-          const tokenMatches = (word:string, token:string) => word === token || word.replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu,'') === token;
-          let matchedOcr = false;
-          for (let i=0; i<normalizedWords.length; i++) {
-            const matched = queryTokens.length === 1
-              ? tokenMatches(normalizedWords[i], queryTokens[0]) || normalizedWords[i].includes(queryTokens[0])
-              : queryTokens.every((token, offset) => i+offset < normalizedWords.length && tokenMatches(normalizedWords[i+offset], token));
-            if (!matched) continue;
-            matchedOcr = true;
-            const count = queryTokens.length;
-            for (let offset=0; offset<count && i+offset<pageOcrWords.length; offset++) {
-              const word=pageOcrWords[i+offset];
-              highlights.push({id:'search-ocr-'+pageNumber+'-'+i+'-'+offset,page:pageNumber,text:word.text,x:word.x,y:word.y,w:word.w,h:word.h,fontSize:Math.max(7,word.h*viewport.height*.72)});
-            }
-            if (queryTokens.length > 1) i += queryTokens.length-1;
-          }
-          if (matchedOcr) pageMatched = true;
-        }
-        // Avoid duplicate result rows where native and OCR text both exist.
-        if (pageMatched && !results.some(result => result.page === pageNumber)) {
-          const sourceText = pageOcrText || pageOcrWords.map(word => word.text).join(' ') || embeddedText;
-          const sourceAt = sourceText.toLocaleLowerCase().indexOf(query);
-          results.push({page:pageNumber,text:sourceAt>=0?sourceText.slice(Math.max(0,sourceAt-65),Math.min(sourceText.length,sourceAt+query.length+100)):sourceText.slice(0,165)});
-        }
+        // For scanned pages, highlight each OCR word that matches any search
+        // token. A phrase can span line breaks; token-level matching still finds
+        // and highlights all of its words.
+        words.forEach((word,index) => {
+          const value=word.text.toLocaleLowerCase().replace(/^[^\\p{L}\\p{N}]+|[^\\p{L}\\p{N}]+$/gu,'');
+          if (!tokens.some(token => value===token || value.includes(token))) return;
+          highlights.push({id:'search-ocr-'+pageNumber+'-'+index,page:pageNumber,text:word.text,x:word.x,y:word.y,w:word.w,h:word.h,fontSize:Math.max(7,word.h*viewport.height*.72)});
+        });
       }
       setSearchResults(results);
       setSearchHighlights(highlights);
-      if(results.length) setPage(results[0].page);
-      setStatus(results.length + ' page(s) contain “' + searchQuery + '”. ' + highlights.length + ' matching text area(s) highlighted.');
+      if (results.length) setPage(results[0].page);
+      setStatus(results.length
+        ? results.length+' page(s) contain “'+searchQuery+'”. '+highlights.length+' matching text area(s) highlighted.'
+        : 'No matches found for “'+searchQuery+'”. Run OCR first for scanned/image-only pages.');
     } catch (error) {
       setStatus(error instanceof Error ? error.message : 'Search failed.');
     } finally {
