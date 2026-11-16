@@ -1308,8 +1308,9 @@ export default function App() {
         const estimatedWidth = (estimatedPixels + 8) / pageWidth;
         const lineCount = Math.max(1, patch.text.split('\n').length);
         const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / pageHeight;
-        // Keep replacements of existing PDF text within the original run bounds.
-        // Export shrinks text to fit instead of crossing into adjacent table cells.
+        // Keep the original point size unchanged. Expand the editable replacement box
+        // to fit the new string; the export renderer wraps at the page edge rather
+        // than reducing the detected font size.
         next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
         next.h = Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
       }
@@ -1551,8 +1552,11 @@ export default function App() {
           if (current) wrapped.push(current);
         }
         const widest = Math.max(1, ...wrapped.map(line => embedded.widthOfTextAtSize(line, size)));
-        const fitScale = Math.min(1, maxWidth / widest, boxHeight / Math.max(1, wrapped.length * size * 1.18));
-        size = Math.max(3, size * fitScale);
+        // Preserve the detected source font size for in-place PDF text replacements.
+        // The replacement box is allowed to wrap/expand; never silently scale the
+        // user's original 8.7 pt (or other detected size) down to fit its old box.
+        const fitScale = annotation.sourceHitId ? 1 : Math.min(1, maxWidth / widest, boxHeight / Math.max(1, wrapped.length * size * 1.18));
+        size = annotation.sourceHitId ? annotation.size : Math.max(3, size * fitScale);
         const lineHeight = size * 1.18;
         wrapped.forEach((line, index) => {
           if (!line) return;
