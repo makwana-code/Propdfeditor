@@ -1083,15 +1083,6 @@ export default function App() {
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         setStatus('High-resolution OCR: page ' + pageNumber + ' of ' + pdf.numPages + '…');
         const pdfPage = await pdf.getPage(pageNumber);
-        // Do not OCR pages that already contain a meaningful native text layer.
-        // This makes the workflow hybrid: ordinary PDFs retain native editable
-        // text, while image-only scanned pages get OCR reconstruction.
-        const nativeContent: any = await pdfPage.getTextContent();
-        const nativeText = (nativeContent.items || []).map((item: any) => item.str || '').join(' ').trim();
-        if (nativeText.replace(/\s/g, '').length >= 12) {
-          // OCR mixed-content pages too: native text remains the authoritative
-          // searchable layer, while OCR catches text embedded in page images.
-        }
         const baseViewport = pdfPage.getViewport({ scale: 1 });
         const safeScale = Math.min(ocrScale, 4200 / Math.max(baseViewport.width, baseViewport.height));
         const viewport = pdfPage.getViewport({ scale: Math.max(1.5, safeScale) });
@@ -1160,22 +1151,7 @@ export default function App() {
       }
       setOcrPages(old => ({ ...old, ...extracted }));
       setOcrWords(old => ({ ...old, ...positionedWords }));
-      // Make OCR words immediately clickable in Edit Text on the current scanned page.
-      // Do not replace embedded PDF text hitboxes on pages that already have selectable text.
-      if (positionedWords[page]?.length) {
-        const currentWords = positionedWords[page];
-        const nativeHits = textHits.filter(hit => hit.page === page && !hit.id.startsWith('ocr-'));
-        const recognizedHits = currentWords.map((word,index) => ({
-          id:'ocr-'+page+'-'+index, page, text:word.text, x:word.x, y:word.y,
-          w:word.w, h:word.h, fontSize:Math.max(7,Math.min(24,word.h*(pageSizeRef.current.height||700)*0.72/Math.max(0.01,fitZoom*zoom/100)))
-        }));
-        setTextHits([...nativeHits, ...recognizedHits]);
-        setStatus('OCR ready. Recognized words on this page are now clickable in Edit Text.');
-      }
       const found = Object.entries(extracted).map(([pageNumber,text]) => ({ page:Number(pageNumber), text:text.slice(0,500) }));
-      setSearchResults(found);
-      setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
-      setActivePanel('ocr');
       // Keep the original PDF page artwork intact. OCR text is indexed as
       // positioned word boxes and edited through the same in-place annotation
       // layer used for native PDF text. Rebuilding/reopening the PDF here used
