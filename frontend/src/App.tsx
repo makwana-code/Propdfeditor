@@ -1110,6 +1110,10 @@ export default function App() {
   }
 
   function markNativeTextDeleted(hit: PdfTextHit) {
+    if (hit.id.startsWith('ocr-') && hit.cleanBackground === false) {
+      setStatus('This OCR line is on a complex background. Automatic deletion is blocked to avoid damaging the scan. Use the Whiteout tool manually if you still want to cover this area.');
+      return;
+    }
     const existing = annotations.find(item => item.sourceHitId === hit.id);
     if (existing) {
       setAnnotations(old => old.map(item => item.id === existing.id ? { ...item, text: '' } : item));
