@@ -300,6 +300,7 @@ export default function App() {
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [font, setFont] = useState('Arial');
   const [fontSize, setFontSize] = useState(12);
+  const [fontSizeInput, setFontSizeInput] = useState('12');
   const [fontColor, setFontColor] = useState('#17243b');
   const [fontAssets, setFontAssets] = useState<Record<string, Uint8Array>>({});
   const [activeStyleId, setActiveStyleId] = useState('body');
@@ -343,6 +344,7 @@ export default function App() {
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const pageMetricsRef = useRef<Map<number, {width:number;height:number;scale:number}>>(new Map());
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
+  useEffect(() => { setFontSizeInput(String(selected?.size ?? fontSize)); }, [selected?.size, fontSize]);
   useEffect(() => {
     if (!document) { setContinuousUrl(''); return; }
     const url = URL.createObjectURL(new Blob([document.bytes], { type: 'application/pdf' }));
@@ -1930,7 +1932,7 @@ export default function App() {
         <div className="property-heading size-heading"><b>⚙　Text Formatting</b><span>⌃</span></div>
         <div className="formatting-panel">
           <label htmlFor="font-family">Font family</label><select id="font-family" value={selected?.font||font} onChange={e=>{setFont(e.target.value);if(selected)updateAnnotation(selected.id,{font:e.target.value})}}>{FONT_FAMILIES.map(f=><option key={f} value={f}>{f}</option>)}</select>
-          <label htmlFor="font-size">Font size (pt)</label><div className="format-size"><button onClick={()=>{const v=Math.max(6,(selected?.size||fontSize)-1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>−</button><input id="font-size" type="number" min="6" max="96" value={selected?.size||fontSize} onChange={e=>{const v=Math.max(6,Math.min(96,Number(e.target.value)||6));setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}/><button onClick={()=>{const v=Math.min(96,(selected?.size||fontSize)+1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>＋</button></div>
+          <label htmlFor="font-size">Font size (pt)</label><div className="format-size"><button onClick={()=>{const v=Math.max(6,(selected?.size||fontSize)-1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>−</button><input id="font-size" type="number" min="1" max="300" step="0.5" inputMode="decimal" value={fontSizeInput} onFocus={()=>setFontSizeInput(String(selected?.size??fontSize))} onChange={e=>{setFontSizeInput(e.target.value);const raw=e.target.value.trim();if(raw!==''&&Number.isFinite(Number(raw))&&Number(raw)>0&&Number(raw)<=300){const v=Number(raw);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v});}}} onBlur={()=>{const parsed=Number(fontSizeInput);const v=Number.isFinite(parsed)&&parsed>0?Math.min(300,Math.max(1,parsed)):selected?.size??fontSize;setFontSize(v);setFontSizeInput(String(v));if(selected)updateAnnotation(selected.id,{size:v});}} onKeyDown={e=>{if(e.key==='Enter')e.currentTarget.blur();e.stopPropagation();}}/><button onClick={()=>{const v=Math.min(96,(selected?.size||fontSize)+1);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>＋</button></div>
           <label htmlFor="font-color">Text colour</label><input id="font-color" type="color" value={selected?.color||fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
 
           <label>Selected text box</label><p className="selection-note">{selected?Math.round(selected.w*100)+'% wide × '+Math.round(selected.h*100)+'% high':'Select a text box on the page to edit its dimensions.'}</p>
