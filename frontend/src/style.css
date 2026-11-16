@@ -280,3 +280,35 @@
    replacement area so long edited headings never show the old text beneath. */
 .source-original-mask{z-index:6!important;pointer-events:none!important;}
 .pdf-annotation.source-text-edit{z-index:7!important;}
+
+
+/* Final source-text replacement stacking: hide the original glyphs on both
+   the standard page canvas and continuous-page canvas before drawing edited text. */
+.pdf-page-stage .source-original-mask,
+.continuous-page-stage .source-original-mask{
+  position:absolute!important;
+  z-index:30!important;
+  display:block!important;
+  opacity:1!important;
+  pointer-events:none!important;
+  box-sizing:border-box!important;
+}
+.pdf-page-stage .pdf-annotation.source-text-edit,
+.continuous-page-stage .pdf-annotation.source-text-edit{
+  z-index:31!important;
+}
+.pdf-page-stage .pdf-annotation.source-text-edit.covered-original,
+.continuous-page-stage .pdf-annotation.source-text-edit.covered-original{
+  background:var(--source-mask-color,#fff)!important;
+}
+.pdf-page-stage .pdf-annotation.source-text-edit.covered-original textarea,
+.continuous-page-stage .pdf-annotation.source-text-edit.covered-original textarea{
+  background:var(--source-mask-color,#fff)!important;
+  color:inherit!important;
+}
+
+/* Page navigation lives in the bottom status/navigation bar. */
+.studio-toolbar .toolbar-page{min-width:112px;width:112px;}
+.studio-statusbar>div{display:flex;align-items:center;gap:6px;}
+.studio-statusbar>div button{min-width:28px;height:26px;border:1px solid #d5deea;border-radius:5px;background:#fff;color:#334155;cursor:pointer;}
+.studio-statusbar>div button:disabled{opacity:.35;cursor:not-allowed;}
