@@ -318,3 +318,62 @@
 .studio-statusbar .bottom-page-nav label{display:flex;align-items:center;gap:5px;font-size:12px;color:#334155;}
 .studio-statusbar .bottom-page-nav input{width:42px;height:26px;padding:2px 5px;border:1px solid #cbd5e1;border-radius:5px;text-align:center;font:inherit;color:#0f172a;background:#fff;}
 .studio-statusbar .bottom-page-nav button{min-width:30px;height:28px;}
+
+
+/* Keep the total-page count fully visible in both page navigation controls. */
+.studio-toolbar .toolbar-page{
+  display:inline-flex!important;
+  flex:0 0 auto!important;
+  align-items:center!important;
+  gap:6px!important;
+  width:auto!important;
+  min-width:max-content!important;
+  white-space:nowrap!important;
+  overflow:visible!important;
+}
+.studio-toolbar .toolbar-page input{
+  flex:0 0 42px!important;
+  width:42px!important;
+  min-width:42px!important;
+}
+.studio-statusbar{
+  display:flex!important;
+  align-items:center!important;
+  gap:8px!important;
+  min-width:0!important;
+  overflow:visible!important;
+}
+.studio-statusbar>span:first-child{
+  flex:1 1 0!important;
+  min-width:0!important;
+  max-width:none!important;
+  overflow:hidden!important;
+  text-overflow:ellipsis!important;
+  white-space:nowrap!important;
+}
+.studio-statusbar .bottom-page-nav{
+  flex:0 0 auto!important;
+  min-width:max-content!important;
+  gap:6px!important;
+  overflow:visible!important;
+}
+.studio-statusbar .bottom-page-nav label{
+  flex:0 0 auto!important;
+  min-width:max-content!important;
+  white-space:nowrap!important;
+  gap:5px!important;
+}
+.studio-statusbar .bottom-page-nav input{
+  flex:0 0 42px!important;
+  width:42px!important;
+  min-width:42px!important;
+}
+.studio-statusbar .bottom-zoom{
+  flex:0 0 auto!important;
+  white-space:nowrap!important;
+}
+@media(max-width:560px){
+  .studio-statusbar{gap:5px!important;padding:0 5px!important;}
+  .studio-statusbar>span:first-child{display:none!important;}
+  .studio-statusbar .bottom-page-nav{gap:4px!important;}
+}
