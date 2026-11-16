@@ -377,3 +377,17 @@
   .studio-statusbar>span:first-child{display:none!important;}
   .studio-statusbar .bottom-page-nav{gap:4px!important;}
 }
+
+
+/* A moved replacement is transparent; only the fixed source glyph area is masked.
+   This prevents a white rectangle from following the replacement across the page. */
+.pdf-page-stage .pdf-annotation.source-text-edit,
+.continuous-page-stage .pdf-annotation.source-text-edit,
+.pdf-page-stage .pdf-annotation.source-text-edit.covered-original,
+.continuous-page-stage .pdf-annotation.source-text-edit.covered-original{
+  background:transparent!important;
+}
+.pdf-page-stage .pdf-annotation.source-text-edit textarea,
+.continuous-page-stage .pdf-annotation.source-text-edit textarea{
+  background:transparent!important;
+}
