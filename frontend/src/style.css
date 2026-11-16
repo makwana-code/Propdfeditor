@@ -243,3 +243,40 @@
 .source-original-mask{position:absolute;z-index:6;pointer-events:none;box-sizing:border-box;}
 .pdf-annotation.source-text-edit{background:transparent!important;}
 .pdf-annotation.source-text-edit .committed-text{background:transparent!important;}
+
+
+/* Keep the main editing toolbar visible in two compact rows instead of
+   forcing users to horizontally scroll to reach the remaining tools. */
+.studio-toolbar{
+  height:auto!important;
+  min-height:82px!important;
+  max-height:none!important;
+  display:flex!important;
+  flex-wrap:wrap!important;
+  align-content:center!important;
+  align-items:center!important;
+  gap:6px 7px!important;
+  padding:6px 12px!important;
+  overflow-x:hidden!important;
+  overflow-y:visible!important;
+  white-space:normal!important;
+}
+.studio-toolbar>.toolbar-button,
+.studio-toolbar>.open-file,
+.studio-toolbar>.merge-file-picker,
+.studio-toolbar>.toolbar-page,
+.studio-toolbar>.toolbar-divider{
+  flex:0 0 auto!important;
+}
+.studio-toolbar>.toolbar-button,
+.studio-toolbar>.open-file,
+.studio-toolbar>.merge-file-picker{height:32px!important;}
+@media(max-width:760px){
+  .studio-toolbar{min-height:0!important;max-height:none!important;gap:5px!important;padding:6px 8px!important;}
+  .studio-toolbar>.toolbar-button,.studio-toolbar>.open-file,.studio-toolbar>.merge-file-picker{height:30px!important;padding-left:8px!important;padding-right:8px!important;font-size:11px!important;}
+}
+
+/* The white mask must cover both the original glyph bounds and the expanded
+   replacement area so long edited headings never show the old text beneath. */
+.source-original-mask{z-index:6!important;pointer-events:none!important;}
+.pdf-annotation.source-text-edit{z-index:7!important;}
