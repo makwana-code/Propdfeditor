@@ -1066,11 +1066,6 @@ export default function App() {
   }
 
   function editExistingText(hit: PdfTextHit) {
-    if (hit.id.startsWith('ocr-') && hit.cleanBackground === false) {
-      setTool('edit');
-      setStatus('This OCR line is on a coloured, textured or complex background. Automatic masking is disabled to protect the original page artwork. Use Whiteout manually before placing replacement text.');
-      return;
-    }
     const existing = annotations.find(item => item.sourceHitId === hit.id);
     if (existing) {
       setSelectedId(existing.id);
@@ -1106,14 +1101,12 @@ export default function App() {
     setSelectedId(id);
     setEditingTextId(id);
     setTool('edit');
-    setStatus('Text selected. Edit while Edit Text is active; switch to Select by clicking the selected text again, then drag the text itself to move it.');
+    setStatus(hit.id.startsWith('ocr-') && hit.cleanBackground === false
+      ? 'OCR text selected and editable. This area has a complex background; check the mask carefully before exporting.'
+      : 'OCR/native text selected. Type your replacement directly in the text box.');
   }
 
   function markNativeTextDeleted(hit: PdfTextHit) {
-    if (hit.id.startsWith('ocr-') && hit.cleanBackground === false) {
-      setStatus('This OCR line is on a complex background. Automatic deletion is blocked to avoid damaging the scan. Use the Whiteout tool manually if you still want to cover this area.');
-      return;
-    }
     const existing = annotations.find(item => item.sourceHitId === hit.id);
     if (existing) {
       setAnnotations(old => old.map(item => item.id === existing.id ? { ...item, text: '' } : item));
@@ -1301,6 +1294,9 @@ export default function App() {
         const words = ocrWords[pageNumber] || [];
         const ocrText = ocrPages[pageNumber] || words.map(word => word.text).join(' ');
         const searchable = normalizeSearch(nativeText + ' ' + ocrText);
+        // Search both native PDF text and OCR output. A match is accepted only
+        // when every query token occurs on the page, while each matching OCR
+        // word receives its own positioned highlight box below.
         const pageHasMatch = tokens.every(token => searchable.includes(token));
         if (!pageHasMatch) continue;
         const source = nativeText || ocrText;
@@ -1325,13 +1321,26 @@ export default function App() {
         // and highlights all of its words.
         words.forEach((word,index) => {
           const value=normalizeSearch(word.text);
-          if (!tokens.some(token => value===token || value.includes(token))) return;
-          highlights.push({id:'search-ocr-'+pageNumber+'-'+index,page:pageNumber,text:word.text,x:word.x,y:word.y,w:word.w,h:word.h,fontSize:Math.max(7,word.h*viewport.height*.72)});
+          const matchedTokens=tokens.filter(token => value.split(/\\s+/).some(part => part===token || part.includes(token)));
+          if (!matchedTokens.length) return;
+          highlights.push({
+            id:'search-ocr-'+pageNumber+'-'+index,
+            page:pageNumber,
+            text:word.text,
+            x:Math.max(0,word.x),
+            y:Math.max(0,word.y),
+            w:Math.max(.004,Math.min(1-word.x,word.w)),
+            h:Math.max(.008,Math.min(1-word.y,word.h)),
+            fontSize:Math.max(7,word.h*viewport.height*.72)
+          });
         });
       }
       setSearchResults(results);
       setSearchHighlights(highlights);
-      if (results.length) setPage(results[0].page);
+      if (results.length) {
+        setPage(results[0].page);
+        setTool('select');
+      }
       setStatus(results.length
         ? results.length+' page(s) contain “'+searchQuery+'”. '+highlights.length+' matching text area(s) highlighted.'
         : 'No matches found for “'+searchQuery+'”. Run OCR first for scanned/image-only pages.');
