@@ -1846,7 +1846,7 @@ export default function App() {
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(x=>x.id!==selected.id));setSelectedId(null)}}}>▤ Remove</button>
       <span className="toolbar-divider"/>
-      <label className="toolbar-page">Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
+      <label className="toolbar-page">Page <button className="toolbar-button toolbar-page-prev" type="button" title="Previous page" aria-label="Previous page" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'OCR all pages'}</button>
