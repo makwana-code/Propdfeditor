@@ -259,9 +259,58 @@ function fontStyleFor(annotation: TextAnnotation) {
 };
 
 type TextAnnotation = { id: string; styleLocked?: boolean; page: number; sourceFontName?: string; sourceFontFamily?: string; sourceFontSize?: number; ocrRebuilt?: boolean; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
-type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; color?: string };
+type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; color?: string; cleanBackground?: boolean };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number; cleanBackground?: boolean };
+
+// OCR returns individual word boxes. Group nearby words into line-sized
+// targets so a phrase or complete line can be replaced in one editing action.
+function groupOcrWordsToLines(words: OcrWord[]): OcrWord[] {
+  const sorted = [...words].filter(word => word.text.trim()).sort((a,b) => {
+    const ay=a.y+a.h/2, by=b.y+b.h/2;
+    return Math.abs(ay-by) > Math.max(a.h,b.h)*0.45 ? ay-by : a.x-b.x;
+  });
+  const lines: Array<{words:OcrWord[];centerY:number;height:number}> = [];
+  for (const word of sorted) {
+    const centerY=word.y+word.h/2;
+    let best: typeof lines[number] | undefined;
+    let bestDistance=Infinity;
+    for (const line of lines) {
+      const distance=Math.abs(centerY-line.centerY);
+      if (distance <= Math.max(word.h,line.height)*0.48 && distance < bestDistance) {
+        best=line; bestDistance=distance;
+      }
+    }
+    if (!best) lines.push({words:[word],centerY,height:word.h});
+    else {
+      best.words.push(word);
+      best.centerY=best.words.reduce((sum,item)=>sum+item.y+item.h/2,0)/best.words.length;
+      best.height=Math.max(best.height,word.h);
+    }
+  }
+  const output: OcrWord[]=[];
+  lines.sort((a,b)=>a.centerY-b.centerY);
+  for (const line of lines) {
+    const ordered=line.words.sort((a,b)=>a.x-b.x);
+    let segment: OcrWord[]=[];
+    const flush=()=>{
+      if(!segment.length)return;
+      const x=Math.min(...segment.map(word=>word.x));
+      const y=Math.min(...segment.map(word=>word.y));
+      const right=Math.max(...segment.map(word=>word.x+word.w));
+      const bottom=Math.max(...segment.map(word=>word.y+word.h));
+      output.push({text:segment.map(word=>word.text.trim()).filter(Boolean).join(' '),x,y,w:right-x,h:bottom-y,cleanBackground:segment.every(word=>word.cleanBackground!==false)});
+      segment=[];
+    };
+    for(const word of ordered){
+      const previous=segment[segment.length-1];
+      if(previous && word.x-(previous.x+previous.w)>Math.max(word.h,previous.h)*4.5) flush();
+      segment.push(word);
+    }
+    flush();
+  }
+  return output.sort((a,b)=>a.y-b.y || a.x-b.x);
+}
 type DrawStroke = { id: string; page: number; color: string; width: number; points: Array<{x:number;y:number}> };
 type EditorSnapshot = { annotations: TextAnnotation[]; comments: PdfComment[]; strokes: DrawStroke[] };
 type EditorHistoryItem = { id: string; label: string; createdAt: number; snapshot: EditorSnapshot };
@@ -541,10 +590,10 @@ export default function App() {
         }
         if (!cancelled && (hits.length || ocrWords[page]?.length)) {
           // Keep native PDF text hit targets AND OCR word targets on mixed pages.
-          const recognized = (ocrWords[page] || []).map((word, index) => ({
-            id: 'ocr-' + page + '-' + index, page, text: word.text,
-            x: word.x, y: word.y, w: word.w, h: word.h,
-            fontSize: Math.max(7, Math.min(24, word.h * viewport.height * 0.72 / Math.max(.01, viewport.scale)))
+          const recognized = groupOcrWordsToLines(ocrWords[page] || []).map((line, index) => ({
+            id: 'ocr-line-' + page + '-' + index, page, text: line.text,
+            x: line.x, y: line.y, w: line.w, h: line.h, cleanBackground: line.cleanBackground,
+            fontSize: Math.max(7, Math.min(24, line.h * viewport.height * 0.72 / Math.max(.01, viewport.scale)))
           }));
           setTextHits([...hits, ...recognized]);
         } else if (!cancelled && hits.length) {
@@ -561,7 +610,7 @@ export default function App() {
     }
     void renderPage();
     return () => { cancelled = true; };
-  }, [document, page, zoom]);
+  }, [document, page, zoom, ocrWords]);
 
   useEffect(() => {
     if (!document) return;
@@ -657,7 +706,7 @@ export default function App() {
           // Include OCR word targets even on mixed pages that already contain native text.
           Object.entries(ocrWords).forEach(([pageKey, words]) => {
             const pageNumber = Number(pageKey);
-            words.forEach((word, index) => allHits.push({ id:'ocr-'+pageNumber+'-'+index, page:pageNumber, text:word.text, x:word.x, y:word.y, w:word.w, h:word.h, fontSize:Math.max(7, Math.min(24, word.h * (pageMetricsRef.current.get(pageNumber)?.height || 700) * .72 / Math.max(.01, pageMetricsRef.current.get(pageNumber)?.scale || 1))) }));
+            groupOcrWordsToLines(words).forEach((line, index) => allHits.push({ id:'ocr-line-'+pageNumber+'-'+index, page:pageNumber, text:line.text, x:line.x, y:line.y, w:line.w, h:line.h, cleanBackground:line.cleanBackground, fontSize:Math.max(7, Math.min(24, line.h * (pageMetricsRef.current.get(pageNumber)?.height || 700) * .72 / Math.max(.01, pageMetricsRef.current.get(pageNumber)?.scale || 1))) }));
           });
           setContinuousHits(allHits);
         }
@@ -1017,6 +1066,11 @@ export default function App() {
   }
 
   function editExistingText(hit: PdfTextHit) {
+    if (hit.id.startsWith('ocr-') && hit.cleanBackground === false) {
+      setTool('edit');
+      setStatus('This OCR line is on a coloured, textured or complex background. Automatic masking is disabled to protect the original page artwork. Use Whiteout manually before placing replacement text.');
+      return;
+    }
     const existing = annotations.find(item => item.sourceHitId === hit.id);
     if (existing) {
       setSelectedId(existing.id);
@@ -1200,16 +1254,19 @@ export default function App() {
       // to reset OCR state and produced unreliable hit targets.
       const activePageWords = positionedWords[page] || [];
       const nativeHits = textHits.filter(hit => hit.page === page && !hit.id.startsWith('ocr-'));
-      const recognizedHits = activePageWords.map((word,index) => ({
-        id:'ocr-'+page+'-'+index, page, text:word.text, x:word.x, y:word.y,
-        w:word.w, h:word.h,
-        fontSize:Math.max(7,Math.min(24,word.h*(pageSizeRef.current.height||700)*0.72/Math.max(0.01,fitZoom*zoom/100)))
+      const recognizedHits = groupOcrWordsToLines(activePageWords).map((line,index) => ({
+        id:'ocr-line-'+page+'-'+index, page, text:line.text, x:line.x, y:line.y,
+        w:line.w, h:line.h, cleanBackground:line.cleanBackground,
+        fontSize:Math.max(7,Math.min(24,line.h*(pageSizeRef.current.height||700)*0.72/Math.max(0.01,fitZoom*zoom/100)))
       }));
       setTextHits([...nativeHits, ...recognizedHits]);
+      setSelectedId(null);
+      setEditingTextId(null);
+      setTool('edit');
       setSearchHighlights([]);
       setSearchResults(found);
       setActivePanel('ocr');
-      setStatus('OCR complete: '+Object.keys(extracted).length+' pages recognized, '+Object.values(positionedWords).reduce((n,words)=>n+words.length,0)+' text regions indexed. Search any word to highlight it, or click a recognized word in Edit Text to replace it. Download to apply edits.');
+      setStatus('OCR complete: '+Object.keys(extracted).length+' pages recognized. '+Object.values(positionedWords).reduce((n,words)=>n+words.length,0)+' words grouped into editable line regions. Edit mode is active; click a recognized text line to replace it.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
