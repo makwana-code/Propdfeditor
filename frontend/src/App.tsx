@@ -1321,7 +1321,7 @@ export default function App() {
         // and highlights all of its words.
         words.forEach((word,index) => {
           const value=normalizeSearch(word.text);
-          const matchedTokens=tokens.filter(token => value.split(/\\s+/).some(part => part===token || part.includes(token)));
+          const matchedTokens=tokens.filter(token => value.split(/\s+/).some(part => part===token || part.includes(token)));
           if (!matchedTokens.length) return;
           highlights.push({
             id:'search-ocr-'+pageNumber+'-'+index,
