@@ -1079,7 +1079,6 @@ export default function App() {
       });
       const extracted: Record<number,string> = {};
       const positionedWords: Record<number,OcrWord[]> = {};
-      const nativeTextPages = new Set<number>();
       setOcrProgress(0);
       for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
         setStatus('High-resolution OCR: page ' + pageNumber + ' of ' + pdf.numPages + '…');
@@ -1092,7 +1091,6 @@ export default function App() {
         if (nativeText.replace(/\s/g, '').length >= 12) {
           // OCR mixed-content pages too: native text remains the authoritative
           // searchable layer, while OCR catches text embedded in page images.
-          nativeTextPages.add(pageNumber);
         }
         const baseViewport = pdfPage.getViewport({ scale: 1 });
         const safeScale = Math.min(ocrScale, 4200 / Math.max(baseViewport.width, baseViewport.height));
@@ -1178,91 +1176,22 @@ export default function App() {
       setSearchResults(found);
       setSearchQuery(found.length ? found[0].text.split(/\s+/).slice(0,6).join(' ') : '');
       setActivePanel('ocr');
-      setStatus('Reconstructing text and preserving stamps, signatures and images…');
-      // Reconstruct by OCR line blocks rather than painting a white rectangle
-      // behind every word. This avoids the "white holes" that damaged table
-      // rules, underlines and spaces in mixed-content scans.
-      const editablePdf = await PDFDocument.load(document.bytes.slice(0));
-      const editableOcrFont = await editablePdf.embedFont(StandardFonts.Helvetica);
-      let rebuiltCount = 0;
-      let preservedArtworkCount = 0;
-      for (const [pageNumber, words] of Object.entries(positionedWords)) {
-        // Do not repaint pages that already have native PDF text: OCR words
-        // remain available for search/highlighting and editing hit targets.
-        if (nativeTextPages.has(Number(pageNumber))) continue;
-        const target = editablePdf.getPage(Number(pageNumber) - 1);
-        const { width, height } = target.getSize();
-        const validWords = words.filter(word => word.text && word.w > 0 && word.h > 0);
-        const ordered = [...validWords].sort((a,b) => (a.y+a.h/2)-(b.y+b.h/2) || a.x-b.x);
-        const lines: OcrWord[][] = [];
-        for (const word of ordered) {
-          const center = word.y + word.h/2;
-          const line = lines.find(items => {
-            const avgCenter = items.reduce((sum,item)=>sum+item.y+item.h/2,0)/items.length;
-            const avgHeight = items.reduce((sum,item)=>sum+item.h,0)/items.length;
-            return Math.abs(center-avgCenter) <= Math.max(word.h,avgHeight)*0.48;
-          });
-          if (line) line.push(word); else lines.push([word]);
-        }
-        for (const line of lines) {
-          line.sort((a,b)=>a.x-b.x);
-          const lineIsRebuildable = line.every(word => word.cleanBackground && /^[\x20-\x7E]+$/.test(word.text));
-          if (!lineIsRebuildable) {
-            // Keep mixed artwork, handwriting, coloured backgrounds and non-Latin
-            // glyphs untouched; add an invisible searchable layer where supported.
-            for (const word of line) {
-              if (/^[\x20-\x7E]+$/.test(word.text)) {
-                const x=word.x*width, yTop=height-word.y*height, boxHeight=word.h*height;
-                const size=Math.max(4,Math.min(42,boxHeight*.78));
-                target.drawText(word.text,{x,y:yTop-boxHeight+size*.08,size,font:editableOcrFont,color:rgb(0,0,0),opacity:0});
-              }
-              preservedArtworkCount++;
-            }
-            continue;
-          }
-          const left=Math.max(0,Math.min(...line.map(word=>word.x))*width-1);
-          const right=Math.min(width,Math.max(...line.map(word=>word.x+word.w))*width+1);
-          const top=Math.min(...line.map(word=>word.y))*height;
-          const bottom=Math.max(...line.map(word=>word.y+word.h))*height;
-          const lineHeight=Math.max(1,bottom-top);
-          // One line-level mask is less destructive than separate word masks.
-          target.drawRectangle({x:left,y:height-bottom-lineHeight*.08,width:Math.max(0,right-left),height:lineHeight*1.16,color:rgb(1,1,1)});
-          for (const word of line) {
-            const x=word.x*width, yTop=height-word.y*height, boxWidth=word.w*width, boxHeight=word.h*height;
-            const size=Math.max(4,Math.min(42,boxHeight*.78));
-            const measured=editableOcrFont.widthOfTextAtSize(word.text,size);
-            const fitSize=measured>boxWidth*1.12?size*(boxWidth*1.12)/measured:size;
-            target.drawText(word.text,{x,y:yTop-boxHeight+Math.max(0,(boxHeight-fitSize)*.12),size:fitSize,font:editableOcrFont,color:rgb(.08,.08,.08)});
-            rebuiltCount++;
-          }
-        }
-      }
-      const editableBytes = await editablePdf.save({ useObjectStreams: false });
-      if (!editableBytes || editableBytes.byteLength < 100) throw new Error('OCR PDF generation failed. The original PDF is unchanged.');
-      const editableBuffer = new ArrayBuffer(editableBytes.byteLength);
-      new Uint8Array(editableBuffer).set(editableBytes);
-      const editableBlob = new Blob([editableBuffer], { type: 'application/pdf' });
-      if (editableBlob.size !== editableBytes.byteLength) throw new Error('The new OCR PDF failed its file-size check.');
-      const originalUrl = URL.createObjectURL(new Blob([document.bytes.slice(0)], { type: 'application/pdf' }));
-      setOriginalOcrUrl(old => { if (old) URL.revokeObjectURL(old); return originalUrl; });
-      setOcrCompareMode(true);
-      const editableFile = new File([editableBlob], document.file.name.replace(/\\.pdf$/i, '') + '-OCR-Editable.pdf', { type: 'application/pdf' });
-      autoOcrOutputFileRef.current = editableFile;
-      await openPdf(editableFile);
-      // openPdf resets document-specific state. Restore the OCR word map and
-      // install stable hit targets for every page after opening the rebuilt PDF.
-      setOcrPages(extracted);
-      setOcrWords(positionedWords);
-      const firstPageWords = positionedWords[1] || [];
-      setTextHits(firstPageWords.map((word, index) => ({
-        id: 'ocr-1-' + index, page: 1, text: word.text, x: word.x, y: word.y,
-        w: word.w, h: word.h, fontSize: Math.max(7, Math.min(24, word.h * (pageSizeRef.current.height || 700) * 0.72 / Math.max(.01, fitZoom * zoom / 100)))
-      })));
-      setPage(1);
-      setActivePanel('ocr');
+      // Keep the original PDF page artwork intact. OCR text is indexed as
+      // positioned word boxes and edited through the same in-place annotation
+      // layer used for native PDF text. Rebuilding/reopening the PDF here used
+      // to reset OCR state and produced unreliable hit targets.
+      const activePageWords = positionedWords[page] || [];
+      const nativeHits = textHits.filter(hit => hit.page === page && !hit.id.startsWith('ocr-'));
+      const recognizedHits = activePageWords.map((word,index) => ({
+        id:'ocr-'+page+'-'+index, page, text:word.text, x:word.x, y:word.y,
+        w:word.w, h:word.h,
+        fontSize:Math.max(7,Math.min(24,word.h*(pageSizeRef.current.height||700)*0.72/Math.max(0.01,fitZoom*zoom/100)))
+      }));
+      setTextHits([...nativeHits, ...recognizedHits]);
       setSearchHighlights([]);
       setSearchResults(found);
-      setStatus('OCR complete: '+Object.keys(extracted).length+' pages recognized, '+Object.values(positionedWords).reduce((n,words)=>n+words.length,0)+' text regions indexed. Search text or click recognized words to edit.');
+      setActivePanel('ocr');
+      setStatus('OCR complete: '+Object.keys(extracted).length+' pages recognized, '+Object.values(positionedWords).reduce((n,words)=>n+words.length,0)+' text regions indexed. Search any word to highlight it, or click a recognized word in Edit Text to replace it. Download to apply edits.');
     } catch (error) {
       setStatus(error instanceof Error ? 'OCR failed: ' + error.message : 'OCR failed.');
     } finally {
