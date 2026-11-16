@@ -1044,7 +1044,7 @@ export default function App() {
     const maskColor = appearance.maskColor;
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, originalText: hit.text, sourceRect: { x0: hit.x, y0: hit.y, x1: hit.x + hit.w, y1: hit.y + hit.h }, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
-      font: hit.fontFamily ? (/serif/i.test(hit.fontFamily) ? 'Times New Roman' : /mono|courier/i.test(hit.fontFamily) ? 'Courier New' : 'Arial') : style.font, size: Math.max(1, hit.fontSize),
+      font: hit.fontFamily || style.font, size: Math.max(1, hit.fontSize),
       color: appearance.color, styleId: 'body', bold:!!hit.bold, italic:!!hit.italic, align: 'left', sourceFontName:hit.fontName, sourceFontFamily:hit.fontFamily, coverOriginal: true, sourceHitId: hit.id,
       ocrRebuilt: hit.id.startsWith('ocr-'), styleLocked: true
     };
@@ -1450,6 +1450,8 @@ export default function App() {
             size: item.size,
             color: parseInt(item.color.replace('#',''), 16),
             font: item.font,
+            sourceFontFamily: item.sourceFontFamily || item.font,
+            sourceFontName: item.sourceFontName || '',
             bold: !!item.bold,
             italic: !!item.italic
           }))));
