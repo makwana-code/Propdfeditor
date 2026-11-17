@@ -336,6 +336,7 @@ export default function App() {
   const [searchHighlights, setSearchHighlights] = useState<PdfTextHit[]>([]);
   const [downloadFallback, setDownloadFallback] = useState<{url:string;name:string}|null>(null);
   const [drawWidth, setDrawWidth] = useState(2.5);
+  const [eraseBrushWidth, setEraseBrushWidth] = useState(12);
   const drawingRef = useRef<DrawStroke | null>(null);
   const drawingBaseRef = useRef<EditorSnapshot | null>(null);
   const whiteoutDragRef = useRef<{start:{x:number;y:number};current:{x:number;y:number};page:number}|null>(null);
@@ -1417,7 +1418,7 @@ export default function App() {
     if ((tool !== 'draw' && tool !== 'erase') || (event.target as HTMLElement).closest('.pdf-annotation,.comment-note')) return;
     const point = normalizedPoint(event); if (!point) return;
     event.preventDefault();
-    const stroke: DrawStroke = { id: crypto.randomUUID(), page: targetPage, color: tool === 'erase' ? eraseBrushColor : drawColor, width: drawWidth, points: [point] };
+    const stroke: DrawStroke = { id: crypto.randomUUID(), page: targetPage, color: tool === 'erase' ? eraseBrushColor : drawColor, width: tool === 'erase' ? eraseBrushWidth : drawWidth, points: [point] };
     drawingBaseRef.current = lastSnapshotRef.current || { annotations, comments, strokes }; drawingRef.current = stroke; setStrokes(old => [...old, stroke]);
     event.currentTarget.setPointerCapture(event.pointerId);
   }
@@ -1916,7 +1917,7 @@ export default function App() {
       <button className="toolbar-button" disabled={!canUndo} onClick={undoEdit}>↶ Undo</button>
       <button className="toolbar-button" disabled={!canRedo} onClick={redoEdit}>↷ Redo</button>
       <input className="toolbar-color" aria-label={tool==='erase'?'Eraser brush colour':'Drawing colour'} type="color" value={tool==='erase'?eraseBrushColor:drawColor} onChange={e=>tool==='erase'?setEraseBrushColor(e.target.value):setDrawColor(e.target.value)}/>
-      <select className="toolbar-select" aria-label="Drawing width" value={drawWidth} onChange={e=>setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option><option value={8}>8 px</option><option value={12}>12 px</option><option value={16}>16 px</option><option value={24}>24 px</option><option value={32}>32 px</option></select>
+      <select className="toolbar-select" aria-label={tool==='erase'?'Eraser brush size':'Drawing width'} title={tool==='erase'?'Eraser brush size':'Drawing width'} value={tool==='erase'?eraseBrushWidth:drawWidth} onChange={e=>tool==='erase'?setEraseBrushWidth(Number(e.target.value)):setDrawWidth(Number(e.target.value))}><option value={1}>1 px</option><option value={2.5}>2.5 px</option><option value={4}>4 px</option><option value={6}>6 px</option><option value={8}>8 px</option><option value={12}>12 px</option><option value={16}>16 px</option><option value={24}>24 px</option><option value={32}>32 px</option><option value={40}>40 px</option><option value={48}>48 px</option></select>
       <button className={selected?.bold?"toolbar-button active":"toolbar-button"} type="button" disabled={!selected} title="Toggle bold" onClick={()=>selected&&updateAnnotation(selected.id,{bold:!selected.bold})}><b>B</b></button>
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
