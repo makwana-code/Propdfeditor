@@ -793,7 +793,7 @@ export default function App() {
         event.preventDefault();
         setEditingTextId(null);
         target?.blur();
-        setStatus('Text box selected. Arrow keys move it; Delete removes it.');
+        setStatus('Text box selected. Use arrow keys to move it; Shift+Arrow moves faster.');
         return;
       }
       if (command && event.key.toLowerCase() === 'c' && selectedId && (!isTyping || target?.closest('.pdf-annotation'))) {
@@ -806,7 +806,7 @@ export default function App() {
       // The selected PDF text box is the keyboard target, even when its
       // textarea has focus. Arrow keys nudge the whole box; Delete removes it.
       // Use Ctrl+Arrow for caret navigation while editing text.
-      if (tool === 'select' && selectedId && !busy && !isTyping && editingTextId !== selectedId && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
+      if ((tool === 'select' || tool === 'edit') && selectedId && !busy && !isTyping && editingTextId !== selectedId && !command && !event.altKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
         event.preventDefault();
         event.stopPropagation();
         const step = event.shiftKey ? 0.01 : 0.004;
