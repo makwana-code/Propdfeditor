@@ -1388,7 +1388,7 @@ export default function App() {
       const next = { ...a, ...patch };
       // Source text edits must retain the detected original typography. Text
       // changes and box resizing may alter geometry, never the source font style.
-      if (a.sourceHitId && a.styleLocked) {
+      if (a.sourceHitId && a.styleLocked && patch.styleLocked !== false) {
         next.font = a.sourceFontFamily || a.font;
         next.size = a.sourceFontSize ?? a.size;
         next.bold = a.bold;
