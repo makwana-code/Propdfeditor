@@ -1357,6 +1357,14 @@ export default function App() {
     setAnnotations(old => old.map(a => {
       if (a.id !== id) return a;
       const next = { ...a, ...patch };
+      // Source text edits must retain the detected original typography. Text
+      // changes and box resizing may alter geometry, never the source font style.
+      if (a.sourceHitId && a.styleLocked) {
+        next.font = a.sourceFontFamily || a.font;
+        next.size = a.sourceFontSize ?? a.size;
+        next.bold = a.bold;
+        next.italic = a.italic;
+      }
       // Grow original-text replacement boxes as the user types so the new
       // string is not squeezed into the old PDF run's narrow width.
       if (a.sourceHitId && typeof patch.text === 'string') {
