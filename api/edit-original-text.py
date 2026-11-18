@@ -301,8 +301,14 @@ class handler(BaseHTTPRequestHandler):
                     # just as a word processor does, while keeping the original
                     # point size whenever the available area is sufficient.
                     available = fitz.Rect(destination)
-                    available.x1 = max(available.x1, min(page.cropbox.x1, available.x0 + max(source_rect.width, font_size * 2)))
-                    available.y1 = max(available.y1, min(page.cropbox.y1, available.y0 + max(destination.height, font_size * 2)))
+                    explicit_lines = replacement.splitlines() or [replacement]
+                    required_width = max(
+                        [fitz.get_text_length(line, fontname=font_name, fontsize=font_size) for line in explicit_lines if line]
+                        or [font_size]
+                    )
+                    required_height = max(font_size * 1.45, len(explicit_lines) * font_size * 1.25)
+                    available.x1 = max(available.x1, min(page.cropbox.x1, available.x0 + max(source_rect.width, font_size * 2, required_width + font_size * 0.3)))
+                    available.y1 = max(available.y1, min(page.cropbox.y1, available.y0 + max(destination.height, required_height)))
                     align_value = {"left": 0, "center": 1, "right": 2}.get(str(edit.get("align", "left")).lower(), 0)
                     inserted = -1
                     chosen_size = font_size
