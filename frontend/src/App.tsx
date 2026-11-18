@@ -501,10 +501,23 @@ export default function App() {
     // Copy the style currently visible on the source. For an edited annotation,
     // sourceFontFamily/sourceFontSize describe the PDF's original text and must
     // not override the annotation's current formatting.
+    // Native PDF text runs do not carry a reliable colour field from PDF.js.
+    // Sample the rendered glyph pixels instead of silently copying black for
+    // coloured source text. Edited annotations already have authoritative style.
+    const sampledAppearance = isHit ? sampleTextAppearance(source as PdfTextHit) : null;
+    const rawFamily = isHit ? (source.fontFamily || source.fontName || 'Arial') : source.font;
+    const familyText = String(rawFamily || 'Arial');
+    const resolvedFamily = /times|serif|cambria|georgia|garamond/i.test(familyText)
+      ? (familyText.toLowerCase().includes('times') ? 'Times New Roman' : familyText)
+      : /courier|mono/i.test(familyText) ? 'Courier New'
+      : /arial|helvetica|sans/i.test(familyText) ? 'Arial'
+      : (isHit && /times|courier|serif/i.test(String(source.fontName || ''))
+          ? (/courier/i.test(String(source.fontName)) ? 'Courier New' : 'Times New Roman')
+          : (isHit ? 'Arial' : familyText));
     setFormatPainterStyle({
-      font: isHit ? (source.fontFamily || source.fontName || 'Arial') : (source.font || 'Arial'),
+      font: resolvedFamily,
       size: isHit ? source.fontSize : source.size,
-      color: source.color || '#222222',
+      color: source.color || sampledAppearance?.color || '#222222',
       bold: !!source.bold,
       italic: !!source.italic,
       underline: isHit ? false : !!source.underline,
