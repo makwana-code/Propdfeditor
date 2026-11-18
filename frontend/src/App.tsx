@@ -1787,6 +1787,7 @@ export default function App() {
             text: item.text,
             rect: item.sourceRect,
             box: { x0: item.x, y0: item.y, x1: item.x + item.w, y1: item.y + item.h },
+            maskColor: item.maskColor || '#ffffff',
             size: item.size,
             color: parseInt(item.color.replace('#',''), 16),
             font: item.font,
