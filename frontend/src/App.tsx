@@ -584,13 +584,30 @@ export default function App() {
   }
 
   function applyFormatPainter(target: TextAnnotation) {
-    if (!formatPainterActive || !formatPainterStyle || target.id === selectedId) return false;
-    updateAnnotation(target.id, { ...formatPainterStyle, styleId: undefined });
+    // The destination may already be selected when its context menu is opened.
+    // Do not reject it merely because selectedId matches the destination.
+    if (!formatPainterActive || !formatPainterStyle) {
+      setStatus('Format Painter is not active. Select the source formatting first.');
+      return false;
+    }
+    const style = {
+      font: formatPainterStyle.font || target.font || 'Arial',
+      size: Number.isFinite(formatPainterStyle.size) && formatPainterStyle.size > 0 ? formatPainterStyle.size : target.size,
+      color: formatPainterStyle.color || target.color || '#222222',
+      bold: !!formatPainterStyle.bold,
+      italic: !!formatPainterStyle.italic,
+      underline: !!formatPainterStyle.underline,
+      align: formatPainterStyle.align || 'left' as const,
+      styleId: undefined
+    };
+    // Apply directly to the annotation state so every destination rendering
+    // (including continuous and single-page views) receives the same values.
+    setAnnotations(old => old.map(item => item.id === target.id ? { ...item, ...style } : item));
     setSelectedId(target.id);
     setEditingTextId(null);
     setFormatPainterActive(false);
     setFormatPainterSourceHit(null);
-    setStatus('Original text formatting applied to the selected edited text. Download or Save the PDF to keep the change.');
+    setStatus('Format Painter applied: font, size, colour, bold, italic, underline and alignment updated. Download or Save the PDF to keep the change.');
     return true;
   }
 
