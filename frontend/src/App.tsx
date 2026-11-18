@@ -534,7 +534,7 @@ export default function App() {
     const hit = isHit ? source as PdfTextHit : null;
     const annotation = isHit ? null : source as TextAnnotation;
     const family = String(hit ? (hit.fontFamily || '') : (annotation?.font || '')).trim();
-    const name = String(hit ? (hit.fontName || '') : (annotation?.font || '')).replace(/^[A-Z]{6,8}\\+/,'').trim();
+    const name = String(hit ? (hit.fontName || '') : (annotation?.font || '')).replace(/^[A-Z]{6,8}\+/,'').trim();
     const candidate = family && !/^(sans-serif|serif|monospace|cursive|fantasy)$/i.test(family) ? family : name;
     const normalized = candidate.toLowerCase().replace(/[,_-]+/g,' ').replace(/\\s+/g,' ').trim();
     if (/calibri/.test(normalized)) return 'Calibri';
@@ -1331,7 +1331,7 @@ export default function App() {
     const maskColor = appearance.maskColor;
     const annotation: TextAnnotation = {
       id, page: hit.page, text: hit.text, originalText: hit.text, sourceRect: { x0: hit.x, y0: hit.y, x1: hit.x + hit.w, y1: hit.y + hit.h }, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
-      font: hit.fontFamily || style.font, size: Math.max(1, hit.fontSize), sourceFontSize: hit.fontSize,
+      font: resolveFormatPainterFont(hit, true) || style.font, size: Math.max(1, hit.fontSize), sourceFontSize: hit.fontSize,
       color: appearance.color, styleId: 'body', bold:!!hit.bold, italic:!!hit.italic, align: 'left', sourceFontName:hit.fontName, sourceFontFamily:hit.fontFamily, coverOriginal: true, sourceHitId: hit.id,
       ocrRebuilt: hit.id.startsWith('ocr-')
     };
