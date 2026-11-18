@@ -642,6 +642,12 @@ export default function App() {
   }
 
   function startFormatPainter() {
+    if (formatPainterActive) {
+      setFormatPainterActive(false);
+      setFormatPainterSourceHit(null);
+      setStatus('Format Painter cancelled.');
+      return;
+    }
     if (formatPainterSourceHit) { copyFormatFromTarget(formatPainterSourceHit); return; }
     if (!selected) {
       setStatus('First left-click an original PDF text (plus cursor), then choose Format Painter.');
@@ -673,9 +679,8 @@ export default function App() {
     setSelectedId(id);
     setEditingTextId(null);
     setPage(hit.page);
-    setFormatPainterActive(false);
-    setFormatPainterSourceHit(null);
-    setStatus('Format Painter applied to original PDF text. Download or Save the PDF to keep the change.');
+    setFormatPainterActive(true);
+    setStatus('Format applied. Click another destination to apply again, or click Format Painter / press Escape to finish.');
     return true;
   }
 
@@ -712,9 +717,11 @@ export default function App() {
     ));
     setSelectedId(target.id);
     setEditingTextId(null);
-    setFormatPainterActive(false);
-    setFormatPainterSourceHit(null);
-    setStatus('Format Painter applied: font, size, colour, bold, italic, underline and alignment updated. Download or Save the PDF to keep the change.');
+    // Keep the painter active like Excel's double-click Format Painter workflow:
+    // the user can apply the same copied formatting to several destinations.
+    // Click the Format Painter button again (or press Escape) to exit.
+    setFormatPainterActive(true);
+    setStatus('Format applied. Click another destination to apply again, or click Format Painter / press Escape to finish.');
     return true;
   }
 
@@ -1829,7 +1836,11 @@ export default function App() {
         const fontKey = annotation.font + ':' + (annotation.bold ? 'b' : '') + (annotation.italic ? 'i' : '');
         let embedded = embeddedFonts.get(fontKey);
         if (!embedded) {
-          const uploadedFont = fontAssets[annotation.font];
+          // Use a separately uploaded bold/italic face only when available.
+          // Otherwise embed the correct standard PDF face so bold/italic flags
+          // are preserved in the downloaded file as well as the editor preview.
+          const faceSuffix = annotation.bold && annotation.italic ? '-bold-italic' : annotation.bold ? '-bold' : annotation.italic ? '-italic' : '';
+          const uploadedFont = fontAssets[annotation.font + faceSuffix] || (!faceSuffix ? fontAssets[annotation.font] : null);
           embedded = uploadedFont
             ? await pdf.embedFont(uploadedFont, { subset: true })
             : await pdf.embedFont(fontStyleFor(annotation));
