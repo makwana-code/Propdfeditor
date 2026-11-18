@@ -260,7 +260,7 @@ function fontStyleFor(annotation: TextAnnotation) {
 };
 
 type TextAnnotation = { id: string; page: number; sourceFontName?: string; sourceFontFamily?: string; sourceFontSize?: number; ocrRebuilt?: boolean; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
-type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; color?: string; cleanBackground?: boolean };
+type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; color?: string; cleanBackground?: boolean };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number; cleanBackground?: boolean };
 
@@ -530,13 +530,15 @@ export default function App() {
     const sampledAppearance = isHit ? sampleTextAppearance(source as PdfTextHit) : null;
     const resolvedFamily = resolveFormatPainterFont(source, isHit);
     setFormatPainterStyle({
+      // Keep the measured PDF point size and the actual sampled glyph colour.
+      // Never replace source properties with generic defaults when metadata exists.
       font: resolvedFamily,
-      size: isHit ? source.fontSize : source.size,
+      size: isHit ? Math.max(1, source.fontSize) : source.size,
       color: source.color || sampledAppearance?.color || '#222222',
       bold: !!source.bold,
       italic: !!source.italic,
-      underline: isHit ? false : !!source.underline,
-      align: isHit ? 'left' : (source.align || 'left')
+      underline: !!source.underline,
+      align: source.align || 'left'
     });
     setFormatPainterSourceHit(isHit ? source as PdfTextHit : null);
     setFormatPainterActive(true);
@@ -544,7 +546,7 @@ export default function App() {
     setEditingTextId(null);
     setSelectedId(isHit ? null : source.id);
     setContextMenu(null);
-    setStatus('FORMAT PAINTER READY: Click any destination text box or original PDF text once to apply the copied formatting. You can also right-click a destination and choose Apply Format Painter.');
+    setStatus('FORMAT PAINTER READY: Source formatting copied. Now LEFT-CLICK the destination text or text box once. Formatting will be applied and the painter will turn off.');
   }
 
   function beginFormatPainterSourceSelection(hit: PdfTextHit, event: ReactPointerEvent<HTMLElement>) {
@@ -747,7 +749,7 @@ export default function App() {
             const bottom = Math.min(viewport.height, Math.max(...corners.map(p=>p[1])) + pad);
             return { id: page + '-' + index, page, text:item.str, x:left/viewport.width, y:top/viewport.height,
               w:Math.max(.004,(right-left)/viewport.width), h:Math.max(.012,(bottom-top)/viewport.height),
-              fontSize:glyphHeight/Math.max(.01,viewport.scale), fontName:item.fontName, fontFamily:content.styles?.[item.fontName]?.fontFamily, bold:/bold|black|heavy|demi|semibold/i.test(String(item.fontName||'')), italic:/italic|oblique/i.test(String(item.fontName||'')) };
+              fontSize:glyphHeight/Math.max(.01,viewport.scale), fontName:item.fontName, fontFamily:content.styles?.[item.fontName]?.fontFamily, bold:/bold|black|heavy|demi|semibold/i.test(String(item.fontName||'')), italic:/italic|oblique/i.test(String(item.fontName||'')), underline:/underline/i.test(String(item.fontName||'')), align:'left' };
           });
         // Build selectable text-line blocks from adjacent PDF text runs. This lets
         // users replace a whole visible line instead of fighting tiny per-run targets.
@@ -771,7 +773,7 @@ export default function App() {
             const x=Math.min(...block.map(v=>v.x)), y=Math.min(...block.map(v=>v.y));
             const right=Math.max(...block.map(v=>v.x+v.w)), bottom=Math.max(...block.map(v=>v.y+v.h));
             const text=block.map((v,i)=>i===0?v.text:((v.x-(block[i-1].x+block[i-1].w))>Math.max(v.h,block[i-1].h)*.18?' ':'')+v.text).join('');
-            hits.push({id:first.id+'-line',page,text,x,y,w:right-x,h:bottom-y,fontSize:block.reduce((sum,v)=>sum+v.fontSize,0)/block.length,fontName:first.fontName,fontFamily:first.fontFamily,bold:block.some(v=>v.bold),italic:block.some(v=>v.italic)});
+            hits.push({id:first.id+'-line',page,text,x,y,w:right-x,h:bottom-y,fontSize:block.reduce((sum,v)=>sum+v.fontSize,0)/block.length,fontName:first.fontName,fontFamily:first.fontFamily,bold:block.filter(v=>v.bold).length>block.length/2,italic:block.filter(v=>v.italic).length>block.length/2,underline:block.filter(v=>v.underline).length>block.length/2,align:first.align||'left'});
             block=[];
           };
           for (const hit of line) {
@@ -891,7 +893,7 @@ export default function App() {
             const pad=.75*(window.devicePixelRatio||1);
             const left=Math.max(0,Math.min(...corners.map(p=>p[0]))-pad), top=Math.max(0,Math.min(...corners.map(p=>p[1]))-pad);
             const right=Math.min(viewport.width,Math.max(...corners.map(p=>p[0]))+pad), bottom=Math.min(viewport.height,Math.max(...corners.map(p=>p[1]))+pad);
-            allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale),fontName:item.fontName,fontFamily:content.styles?.[item.fontName]?.fontFamily,bold:/bold|black|heavy|demi|semibold/i.test(String(item.fontName||'')),italic:/italic|oblique/i.test(String(item.fontName||''))});
+            allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale),fontName:item.fontName,fontFamily:content.styles?.[item.fontName]?.fontFamily,bold:/bold|black|heavy|demi|semibold/i.test(String(item.fontName||'')),italic:/italic|oblique/i.test(String(item.fontName||'')),underline:/underline/i.test(String(item.fontName||'')),align:'left'});
           });
         }
         if (!cancelled) {
