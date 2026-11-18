@@ -3,6 +3,7 @@ from email.parser import BytesParser
 from email.policy import default
 import json
 import re
+import difflib
 import fitz
 
 
@@ -29,90 +30,67 @@ def rect_area(rect):
 
 
 def resolve_original_text(page, old_text, target):
-    """Resolve a PDF.js hit against native PDF text, even across span splits."""
+    """Resolve PDF.js text geometry to native PDF spans before trying text search."""
     wanted = clean_text(old_text)
     if not wanted:
         raise ValueError("Selected text is empty.")
 
-    # Native text search works across many PyMuPDF span boundaries.
+    candidates = []
+    target_area = max(1.0, rect_area(target))
+
+    # The browser's text layer may combine/split PDF text runs differently
+    # from PyMuPDF. Resolve the selected on-screen rectangle against the
+    # actual native spans first; this avoids matching a repeated phrase elsewhere.
+    for block in page.get_text("dict").get("blocks", []):
+        for line in block.get("lines", []):
+            selected = []
+            for span in line.get("spans", []):
+                rect = fitz.Rect(span.get("bbox", (0, 0, 0, 0)))
+                if rect.is_empty or not rect.intersects(target):
+                    continue
+                overlap = rect & target
+                if rect_area(overlap) < min(rect_area(rect), target_area) * 0.035:
+                    continue
+                selected.append((rect, span, overlap))
+            if not selected:
+                continue
+            selected.sort(key=lambda item: item[0].x0)
+            union = fitz.Rect(selected[0][0])
+            parts = []
+            previous = None
+            for rect, span, _ in selected:
+                if previous is not None:
+                    gap = rect.x0 - previous.x1
+                    if gap > max(rect.height, previous.height) * 0.18:
+                        parts.append(" ")
+                parts.append(str(span.get("text", "")))
+                union |= rect
+                previous = rect
+            extracted = clean_text("".join(parts))
+            overlap_area = sum(rect_area(item[2]) for item in selected)
+            coverage = min(1.0, overlap_area / target_area)
+            similarity = difflib.SequenceMatcher(None, clean_text(extracted).lower(), wanted.lower()).ratio()
+            distance = rect_distance(union, target)
+            # Geometry is the primary signal; text similarity breaks ties.
+            score = coverage * 4.0 + similarity * 2.0 - distance / max(20.0, target.width + target.height)
+            candidates.append((score, union, selected[0][1], similarity, coverage))
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        score, chosen, span, similarity, coverage = candidates[0]
+        if coverage >= 0.22 and (similarity >= 0.35 or coverage >= 0.72):
+            return chosen, span
+
+    # Exact native text search remains a fallback for documents whose text
+    # geometry differs substantially from the PDF.js viewport coordinates.
     try:
         matches = page.search_for(old_text, quads=False)
     except Exception:
         matches = []
-
-    # Fallback: compare the selected geometry against native spans. A PDF.js
-    # item can be one run while PyMuPDF reports several adjacent spans.
-    spans = []
-    for block in page.get_text("dict").get("blocks", []):
-        for line in block.get("lines", []):
-            line_spans = []
-            for span in line.get("spans", []):
-                text = clean_text(span.get("text", ""))
-                rect = fitz.Rect(span["bbox"])
-                if text and rect.intersects(target):
-                    line_spans.append((rect, span, text))
-            if line_spans:
-                spans.append(line_spans)
-
-    candidates = [(fitz.Rect(r), None) for r in matches if not fitz.Rect(r).is_empty]
-    for line_spans in spans:
-        line_spans.sort(key=lambda item: (round(item[0].y0, 1), item[0].x0))
-        combined = ""
-        selected = []
-        for rect, span, text in line_spans:
-            combined = (combined + " " + text).strip()
-            selected.append((rect, span))
-            if clean_text(combined) == wanted:
-                union = fitz.Rect(selected[0][0])
-                for item_rect, _ in selected[1:]:
-                    union |= item_rect
-                candidates.append((union, selected[0][1]))
-                break
-            # Do not let a long unrelated line grow without bound.
-            if len(clean_text(combined)) > len(wanted) + 24:
-                break
-
-    # Geometry-first fallback: PDF.js text runs and native PDF spans often
-    # differ in whitespace, ligatures, or run boundaries. If exact text matching
-    # fails, use the actual selected rectangle to gather the native spans it covers.
-    if not candidates:
-        geometric = []
-        for block in page.get_text("dict").get("blocks", []):
-            for line in block.get("lines", []):
-                selected_spans = []
-                for candidate_span in line.get("spans", []):
-                    candidate_rect = fitz.Rect(candidate_span.get("bbox", (0, 0, 0, 0)))
-                    if candidate_rect.is_empty or not candidate_rect.intersects(target):
-                        continue
-                    overlap = candidate_rect & target
-                    # Ignore incidental glyph touches at the edge of a hit box.
-                    if rect_area(overlap) < min(rect_area(candidate_rect), rect_area(target)) * 0.12:
-                        continue
-                    selected_spans.append((candidate_rect, candidate_span))
-                if selected_spans:
-                    selected_spans.sort(key=lambda item: item[0].x0)
-                    union = fitz.Rect(selected_spans[0][0])
-                    for candidate_rect, _ in selected_spans[1:]:
-                        union |= candidate_rect
-                    # Keep only the spans that substantially overlap the target.
-                    if union.intersects(target):
-                        geometric.append((union, selected_spans[0][1]))
-        if geometric:
-            geometric.sort(key=lambda item: rect_distance(item[0], target))
-            candidates.extend(geometric)
-
-    if not candidates:
-        raise ValueError(
-            "Could not locate editable native PDF text in this selected area. "
-            "Scanned or outlined text needs OCR/image replacement instead."
-        )
-
-    candidates.sort(key=lambda item: rect_distance(item[0], target))
-    chosen, span = candidates[0]
-    # page.search_for() returns the best exact rectangle but not its font span.
-    # Recover the nearest overlapping native span so replacement inherits the
-    # source font metrics, colour and baseline instead of silently defaulting.
-    if span is None:
+    exact = [(fitz.Rect(rect), None) for rect in matches if not fitz.Rect(rect).is_empty]
+    if exact:
+        exact.sort(key=lambda item: rect_distance(item[0], target))
+        chosen, _ = exact[0]
         nearest = []
         for block in page.get_text("dict").get("blocks", []):
             for line in block.get("lines", []):
@@ -121,16 +99,24 @@ def resolve_original_text(page, old_text, target):
                     if candidate_rect.intersects(chosen):
                         overlap = candidate_rect & chosen
                         nearest.append((-rect_area(overlap), rect_distance(candidate_rect, chosen), candidate_span))
+        span = None
         if nearest:
             nearest.sort(key=lambda item: (item[0], item[1]))
             span = nearest[0][2]
-    if len(candidates) > 1 and rect_distance(candidates[1][0], target) + 1 < rect_distance(chosen, target):
-        # The nearest geometric match wins; do not reject merely because the
-        # same phrase occurs elsewhere in the document.
-        pass
-    if not chosen.intersects(target) and rect_distance(chosen, target) > max(24, target.width * 0.35):
-        raise ValueError("Could not confidently match the selected text position. No changes were applied.")
-    return chosen, span
+        if chosen.intersects(target) or rect_distance(chosen, target) <= max(24, target.width * 0.35):
+            return chosen, span
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        score, chosen, span, similarity, coverage = candidates[0]
+        if coverage >= 0.12:
+            return chosen, span
+
+    raise ValueError(
+        "Could not confidently locate the selected native PDF text. "
+        "Scanned or outlined text needs OCR/image replacement instead."
+    )
+
 
 
 def resolve_embedded_font(doc, page, source_span, requested_font, bold, italic):
