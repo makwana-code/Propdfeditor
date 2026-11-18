@@ -122,7 +122,7 @@ def resolve_original_text(page, old_text, target):
 def resolve_embedded_font(doc, page, source_span, requested_font, bold, italic):
     """Reuse an embedded PDF font when the requested family is present in the file."""
     def normal(value):
-        value = re.sub(r"^[A-Z]{6,8}\\+", "", str(value or ""))
+        value = re.sub(r"^[A-Z]{6,8}\+", "", str(value or ""))
         return re.sub(r"[^a-z0-9]", "", value.lower())
 
     wanted = normal(requested_font)
