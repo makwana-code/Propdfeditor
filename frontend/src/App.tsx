@@ -744,6 +744,50 @@ export default function App() {
     else updateAnnotation(selected.id, { h: next });
   }
 
+  function fitSelectedBoxToText() {
+    if (!selected) return;
+    const canvas = window.document.createElement('canvas');
+    const context = canvas.getContext('2d');
+    const metrics = pageMetricsRef.current.get(selected.page);
+    const pageWidth = continuousView
+      ? (continuousCanvasRefs.current.get(selected.page)?.clientWidth || metrics?.width || 1)
+      : (canvasRef.current?.clientWidth || metrics?.width || 1);
+    const pageHeight = continuousView
+      ? (continuousCanvasRefs.current.get(selected.page)?.clientHeight || metrics?.height || 1)
+      : (canvasRef.current?.clientHeight || metrics?.height || 1);
+    const scale = metrics?.scale || fitZoom * zoom / 10000;
+    const fontPx = Math.max(6, selected.size * scale);
+    if (!context || !pageWidth || !pageHeight) return;
+    context.font = (selected.italic ? 'italic ' : '') + (selected.bold ? '700 ' : '400 ') + fontPx + 'px "' + selected.font + '"';
+    const availableWidth = Math.max(12, (1 - selected.x) * pageWidth - 8);
+    const sourceLines = (selected.text || ' ').split(/\r?\n/);
+    let visualLineCount = 0;
+    let widestLine = 0;
+    for (const sourceLine of sourceLines) {
+      const words = sourceLine.split(/\s+/).filter(Boolean);
+      if (!words.length) { visualLineCount += 1; continue; }
+      let currentLine = '';
+      for (const word of words) {
+        const candidate = currentLine ? currentLine + ' ' + word : word;
+        if (currentLine && context.measureText(candidate).width > availableWidth) {
+          widestLine = Math.max(widestLine, context.measureText(currentLine).width);
+          visualLineCount += 1;
+          currentLine = word;
+        } else {
+          currentLine = candidate;
+        }
+      }
+      widestLine = Math.max(widestLine, context.measureText(currentLine).width);
+      visualLineCount += 1;
+    }
+    const widthPx = Math.min(availableWidth, Math.max(12, widestLine + 8));
+    const heightPx = Math.max(fontPx * 1.25 + 6, visualLineCount * fontPx * 1.2 + 6);
+    const nextWidth = Math.min(1 - selected.x, widthPx / pageWidth);
+    const nextHeight = Math.min(1 - selected.y, heightPx / pageHeight);
+    updateAnnotation(selected.id, { w: nextWidth, h: nextHeight });
+    setStatus('Text box fitted to its text content.');
+  }
+
   useEffect(() => {
     let cancelled = false;
     async function renderPage() {      if (!document) return;
@@ -2288,6 +2332,7 @@ export default function App() {
         <div className="box-size-control"><label htmlFor="box-width">Width:</label><button disabled={!selected} onClick={()=>resizeSelectedBox('w',-.02)}>−</button><input id="box-width" type="range" min="8" max="95" value={Math.round((selected?.w||.34)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{w:Number(e.target.value)/100})}/><button disabled={!selected} onClick={()=>resizeSelectedBox('w',.02)}>＋</button><b>{selected?Math.round(selected.w*100):100}%</b></div>
         <div className="box-size-control"><label htmlFor="box-height">Height:</label><button disabled={!selected} onClick={()=>resizeSelectedBox('h',-.02)}>−</button><input id="box-height" type="range" min="4" max="80" value={Math.round((selected?.h||.12)*100)} disabled={!selected} onChange={e=>selected&&updateAnnotation(selected.id,{h:Number(e.target.value)/100})}/><button disabled={!selected} onClick={()=>resizeSelectedBox('h',.02)}>＋</button><b>{selected?Math.round(selected.h*100):100}%</b></div>
         <label className="resize-check"><input type="checkbox" checked readOnly/> Show resize handles</label>
+        <button type="button" className="toolbar-button" disabled={!selected} title="Automatically fit the selected text box to its text content" onClick={fitSelectedBoxToText}>↔ Fit box to text</button>
         <div className="property-heading size-heading"><b>⚙　Text Formatting</b><span>⌃</span></div>
         <div className="formatting-panel">          <label htmlFor="font-family">Font family</label><div className="font-family-picker"><div className="font-family-input-row"><input id="font-family" type="text" autoComplete="off" spellCheck={false} placeholder="Type to search fonts (e.g. Arial)" value={showFontFamilyList?fontFamilyQuery:(selected?.font||font)} onFocus={()=>{setFontFamilyQuery('');setShowFontFamilyList(true)}} onChange={e=>{setFontFamilyQuery(e.target.value);setShowFontFamilyList(true)}} onKeyDown={e=>{if(e.key==='Escape'){setFontFamilyQuery('');setShowFontFamilyList(false)}if(e.key==='ArrowDown'){e.preventDefault();setShowFontFamilyList(true)}if(e.key==='Enter'){e.preventDefault();const q=fontFamilyQuery.trim().toLowerCase();const match=FONT_FAMILIES.find(f=>f.toLowerCase()===q)||FONT_FAMILIES.find(f=>f.toLowerCase().includes(q));const chosen=match||fontFamilyQuery.trim();if(chosen){setFont(chosen);if(selected)updateAnnotation(selected.id,{font:chosen});setFontFamilyQuery('');setShowFontFamilyList(false)}}}}/><button type="button" className="font-family-list-toggle" aria-label="Show all font families" title="Show all font families" aria-expanded={showFontFamilyList} onMouseDown={e=>e.preventDefault()} onClick={()=>{setFontFamilyQuery('');setShowFontFamilyList(v=>!v)}}>▾</button></div>{showFontFamilyList&&<div className="font-family-options" role="listbox" aria-label="Font families">{FONT_FAMILIES.filter(f=>!fontFamilyQuery.trim()||f.toLowerCase().includes(fontFamilyQuery.trim().toLowerCase())).map(f=><button type="button" role="option" aria-selected={(selected?.font||font)===f} key={f} className={(selected?.font||font)===f?'font-family-option active':'font-family-option'} style={{fontFamily:f}} onMouseDown={e=>e.preventDefault()} onClick={()=>{setFont(f);if(selected)updateAnnotation(selected.id,{font:f});setFontFamilyQuery('');setShowFontFamilyList(false)}}>{f}</button>)}{fontFamilyQuery.trim()&&!FONT_FAMILIES.some(f=>f.toLowerCase().includes(fontFamilyQuery.trim().toLowerCase()))&&<small className="font-family-empty">No matching font. Press Enter to use “{fontFamilyQuery.trim()}” as a custom font.</small>}</div>}</div>
           {selected?.sourceHitId && <div className="detected-text-style"><b>Original text style</b><span>Size: {selected.size.toFixed(1)} pt</span><span>Font: {selected.sourceFontFamily || selected.sourceFontName || 'OCR – estimated style'}</span><span>Weight: {selected.bold ? 'Bold' : 'Regular'}{selected.italic ? ' · Italic' : ''}</span></div>}
