@@ -603,9 +603,20 @@ export default function App() {
       align: formatPainterStyle.align || 'left' as const,
       styleId: undefined
     };
-    // Apply directly to the annotation state so every destination rendering
-    // (including continuous and single-page views) receives the same values.
-    setAnnotations(old => old.map(item => item.id === target.id ? { ...item, ...style } : item));
+    // A native-PDF text edit starts as a transparent overlay so the original
+    // glyphs remain visible. Merely changing the overlay's CSS leaves those
+    // original glyphs untouched, making Format Painter appear to do nothing.
+    // Promote that destination to a real replacement: mask its original glyphs
+    // and render the annotation using the copied style in both canvas and export.
+    setAnnotations(old => old.map(item => item.id === target.id
+      ? {
+          ...item,
+          ...style,
+          coverOriginal: item.sourceHitId ? true : item.coverOriginal,
+          maskColor: item.maskColor || '#ffffff'
+        }
+      : item
+    ));
     setSelectedId(target.id);
     setEditingTextId(null);
     setFormatPainterActive(false);
