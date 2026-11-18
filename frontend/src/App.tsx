@@ -497,8 +497,10 @@ export default function App() {
   const activeStyle: TextStyle = selected ? { id: selected.styleId || activeStyleId, label: TEXT_STYLES.find(style => style.id === selected.styleId)?.label || 'Custom', font:selected.font, size:selected.size, color:selected.color, bold:selected.bold||false, italic:selected.italic||false, underline:selected.underline||false, align:selected.align||'left' } : (TEXT_STYLES.find(style => style.id === activeStyleId) || TEXT_STYLES[6]);
 
   function resolveFormatPainterFont(source: PdfTextHit | TextAnnotation, isHit: boolean) {
-    const family = String(isHit ? (source.fontFamily || '') : source.font || '').trim();
-    const name = String(isHit ? (source.fontName || '') : source.font || '').replace(/^[A-Z]{6,8}\\+/,'').trim();
+    const hit = isHit ? source as PdfTextHit : null;
+    const annotation = isHit ? null : source as TextAnnotation;
+    const family = String(hit ? (hit.fontFamily || '') : (annotation?.font || '')).trim();
+    const name = String(hit ? (hit.fontName || '') : (annotation?.font || '')).replace(/^[A-Z]{6,8}\\+/,'').trim();
     const candidate = family && !/^(sans-serif|serif|monospace|cursive|fantasy)$/i.test(family) ? family : name;
     const normalized = candidate.toLowerCase().replace(/[,_-]+/g,' ').replace(/\\s+/g,' ').trim();
     if (/calibri/.test(normalized)) return 'Calibri';
