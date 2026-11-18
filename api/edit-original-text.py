@@ -133,6 +133,54 @@ def resolve_original_text(page, old_text, target):
     return chosen, span
 
 
+def resolve_embedded_font(doc, page, source_span, requested_font, bold, italic):
+    """Reuse an embedded PDF font when the requested family is present in the file."""
+    def normal(value):
+        value = re.sub(r"^[A-Z]{6,8}\\+", "", str(value or ""))
+        return re.sub(r"[^a-z0-9]", "", value.lower())
+
+    wanted = normal(requested_font)
+    if not wanted:
+        wanted = normal((source_span or {}).get("font", ""))
+    if not wanted:
+        return None
+
+    candidates = []
+    seen = set()
+    try:
+        for page_index in range(len(doc)):
+            for entry in doc[page_index].get_fonts(full=True):
+                xref = int(entry[0])
+                if not xref or xref in seen:
+                    continue
+                seen.add(xref)
+                basefont = str(entry[3] or entry[4] or "")
+                base = normal(basefont)
+                if not base or not (wanted in base or base in wanted):
+                    continue
+                name = basefont.lower()
+                has_bold = bool(re.search(r"bold|demi|heavy|black|semibold", name))
+                has_italic = bool(re.search(r"italic|oblique", name))
+                score = (4 if has_bold == bool(bold) else 0) + (4 if has_italic == bool(italic) else 0)
+                candidates.append((score, xref))
+    except Exception:
+        return None
+
+    candidates.sort(reverse=True)
+    for _, xref in candidates:
+        try:
+            extracted = doc.extract_font(xref)
+            font_bytes = extracted[3] if extracted and len(extracted) > 3 else None
+            if not font_bytes:
+                continue
+            alias = "PDFEditFont" + str(xref)
+            page.insert_font(fontname=alias, fontbuffer=font_bytes)
+            return alias
+        except Exception:
+            continue
+    return None
+
+
 class handler(BaseHTTPRequestHandler):
     def do_POST(self):
         doc = None
@@ -224,32 +272,32 @@ class handler(BaseHTTPRequestHandler):
                         (color_int & 255) / 255,
                     )
 
-                    # Use the formatting currently applied in the editor, not
-                    # the destination span's old font. This is essential for Format
-                    # Painter: the destination's original font must not overwrite
-                    # the copied font family / weight / italic flags.
-                    requested_font = str(edit.get("font") or (span or {}).get("font", "")).lower()
-                    is_mono = any(term in requested_font for term in ("courier", "mono", "consolas"))
-                    is_times = any(term in requested_font for term in ("times", "cambria", "georgia", "garamond", "palatino", "serif"))
-                    family_prefix = "cour" if is_mono else ("ti" if is_times else "helv")
+                    requested_font = str(edit.get("font") or edit.get("sourceFontFamily") or (span or {}).get("font", ""))
                     bold = bool(edit.get("bold", False))
                     italic = bool(edit.get("italic", False))
-                    font_name = {
-                        ("cour", False, False): "cour",
-                        ("cour", True, False): "cobo",
-                        ("cour", False, True): "coit",
-                        ("cour", True, True): "cobi",
-                        ("ti", False, False): "tiro",
-                        ("ti", True, False): "tibo",
-                        ("ti", False, True): "tiit",
-                        ("ti", True, True): "tibi",
-                        ("helv", False, False): "helv",
-                        ("helv", True, False): "hebo",
-                        ("helv", False, True): "heit",
-                        ("helv", True, True): "hebi",
-                    }[(family_prefix, bold, italic)]
-                    origin = (span or {}).get("origin")
-                    source_baseline_offset = source_rect.y1 - float(origin[1]) if origin and len(origin) > 1 else max(1, font_size * 0.18)
+                    # Prefer the actual embedded face from this PDF. This keeps
+                    # the source document's typography instead of substituting
+                    # Helvetica for every unrecognised family.
+                    font_name = resolve_embedded_font(doc, page, span, requested_font, bold, italic)
+                    if not font_name:
+                        is_mono = any(term in requested_font.lower() for term in ("courier", "mono", "consolas"))
+                        is_times = any(term in requested_font.lower() for term in ("times", "cambria", "georgia", "garamond", "palatino", "serif"))
+                        family_prefix = "cour" if is_mono else ("ti" if is_times else "helv")
+                        font_name = {
+                            ("cour", False, False): "cour",
+                            ("cour", True, False): "cobo",
+                            ("cour", False, True): "coit",
+                            ("cour", True, True): "cobi",
+                            ("ti", False, False): "tiro",
+                            ("ti", True, False): "tibo",
+                            ("ti", False, True): "tiit",
+                            ("ti", True, True): "tibi",
+                            ("helv", False, False): "helv",
+                            ("helv", True, False): "hebo",
+                            ("helv", False, True): "heit",
+                            ("helv", True, True): "hebi",
+                        }[(family_prefix, bold, italic)]
+
                     box = edit.get("box") or {}
                     page_rect = page.rect
                     destination_visible = fitz.Rect(
@@ -260,14 +308,48 @@ class handler(BaseHTTPRequestHandler):
                     )
                     destination = destination_visible * page.derotation_matrix if page.rotation else destination_visible
                     destination &= page.cropbox
-                    baseline_y = destination.y1 - source_baseline_offset
-                    inserted = page.insert_text(
-                        (destination.x0, baseline_y), replacement,
-                        fontname=font_name, fontsize=font_size,
-                        color=color, overlay=True,
-                    )
-                    if inserted <= 0:
-                        raise ValueError("The original text was removed but the replacement could not be inserted.")
+                    if destination.is_empty:
+                        raise ValueError("Replacement text box is outside the PDF page.")
+
+                    # Allow text to flow to the right and down within the page,
+                    # just as a word processor does, while keeping the original
+                    # point size whenever the available area is sufficient.
+                    available = fitz.Rect(destination)
+                    available.x1 = max(available.x1, min(page.cropbox.x1, available.x0 + max(source_rect.width, font_size * 2)))
+                    available.y1 = max(available.y1, min(page.cropbox.y1, available.y0 + max(destination.height, font_size * 2)))
+                    align_value = {"left": 0, "center": 1, "right": 2}.get(str(edit.get("align", "left")).lower(), 0)
+                    inserted = -1
+                    chosen_size = font_size
+                    for attempt in range(28):
+                        inserted = page.insert_textbox(
+                            available, replacement,
+                            fontname=font_name, fontsize=chosen_size,
+                            color=color, align=align_value,
+                            lineheight=1.12, overlay=True,
+                        )
+                        if inserted >= 0:
+                            break
+                        chosen_size *= 0.94
+                    if inserted < 0:
+                        raise ValueError("The replacement text does not fit on the page. Shorten the text or use a smaller font size.")
+
+                    if bool(edit.get("underline", False)):
+                        # Underline each rendered line using the same baseline
+                        # metrics as the inserted text.
+                        line_height = chosen_size * 1.12
+                        for line_index, line_text in enumerate(replacement.splitlines() or [replacement]):
+                            if not line_text:
+                                continue
+                            text_width = fitz.get_text_length(line_text, fontname=font_name, fontsize=chosen_size)
+                            baseline = available.y0 + chosen_size * (1.02 + line_index * 1.12)
+                            if align_value == 1:
+                                line_x = available.x0 + max(0, (available.width - text_width) / 2)
+                            elif align_value == 2:
+                                line_x = available.x1 - text_width
+                            else:
+                                line_x = available.x0
+                            page.draw_line((line_x, baseline), (min(available.x1, line_x + text_width), baseline),
+                                           color=color, width=max(0.35, chosen_size * 0.045), overlay=True)
 
             output = doc.tobytes(garbage=4, deflate=True)
             doc.close()
