@@ -193,7 +193,13 @@ class handler(BaseHTTPRequestHandler):
 
                 old_text = str(edit.get("originalText", ""))
                 source_rect, span = resolve_original_text(page, old_text, target)
-                resolved.append((page_no, source_rect, span, edit))
+                # Preserve the sampled page background when replacing text.
+                # This avoids hard-coded white patches on tinted forms/tables.
+                mask = str(edit.get("maskColor") or "#ffffff").lstrip("#")
+                if len(mask) != 6 or not re.fullmatch(r"[0-9a-fA-F]{6}", mask):
+                    mask = "ffffff"
+                mask_rgb = tuple(int(mask[i:i + 2], 16) / 255 for i in (0, 2, 4))
+                resolved.append((page_no, source_rect, span, edit, mask_rgb))
 
             by_page = {}
             for entry in resolved:
@@ -201,11 +207,11 @@ class handler(BaseHTTPRequestHandler):
 
             for page_no, entries in by_page.items():
                 page = doc[page_no]
-                for _, source_rect, _, _ in entries:
-                    page.add_redact_annot(source_rect, fill=(1, 1, 1), cross_out=False)
+                for _, source_rect, _, _, mask_rgb in entries:
+                    page.add_redact_annot(source_rect, fill=mask_rgb, cross_out=False)
                 page.apply_redactions(images=0, graphics=0, text=0)
 
-                for _, source_rect, span, edit in entries:
+                for _, source_rect, span, edit, _mask_rgb in entries:
                     replacement = str(edit.get("text", ""))
                     if not replacement:
                         continue
@@ -218,13 +224,30 @@ class handler(BaseHTTPRequestHandler):
                         (color_int & 255) / 255,
                     )
 
-                    # Use the native text span's baseline when available. The UI
-                    # overlay box is only a visual editor; it must not redefine the
-                    # source PDF coordinates during export.
-                    source_font = ((span or {}).get("font", "")).lower()
-                    font_name = "cour" if "mono" in source_font else (
-                        "tiro" if any(term in source_font for term in ("times", "serif")) else "helv"
-                    )
+                    # Use the formatting currently applied in the editor, not
+                    # the destination span's old font. This is essential for Format
+                    # Painter: the destination's original font must not overwrite
+                    # the copied font family / weight / italic flags.
+                    requested_font = str(edit.get("font") or (span or {}).get("font", "")).lower()
+                    is_mono = any(term in requested_font for term in ("courier", "mono", "consolas"))
+                    is_times = any(term in requested_font for term in ("times", "cambria", "georgia", "garamond", "palatino", "serif"))
+                    family_prefix = "cour" if is_mono else ("ti" if is_times else "helv")
+                    bold = bool(edit.get("bold", False))
+                    italic = bool(edit.get("italic", False))
+                    font_name = {
+                        ("cour", False, False): "cour",
+                        ("cour", True, False): "cobo",
+                        ("cour", False, True): "coit",
+                        ("cour", True, True): "cobi",
+                        ("ti", False, False): "tiro",
+                        ("ti", True, False): "tibo",
+                        ("ti", False, True): "tiit",
+                        ("ti", True, True): "tibi",
+                        ("helv", False, False): "helv",
+                        ("helv", True, False): "hebo",
+                        ("helv", False, True): "heit",
+                        ("helv", True, True): "hebi",
+                    }[(family_prefix, bold, italic)]
                     origin = (span or {}).get("origin")
                     source_baseline_offset = source_rect.y1 - float(origin[1]) if origin and len(origin) > 1 else max(1, font_size * 0.18)
                     box = edit.get("box") or {}
