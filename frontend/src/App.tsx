@@ -2076,7 +2076,10 @@ export default function App() {
         const family = (comment.fontFamily || 'Helvetica').toLowerCase();
         const isTimes = family.includes('times') || family.includes('georgia') || family.includes('cambria');
         const isCourier = family.includes('courier');
-        const fontKey = isTimes ? 'TiRo' : isCourier ? 'Cour' : 'Helv';
+        const fontKey = isTimes
+          ? (comment.bold && comment.italic ? 'TiBI' : comment.bold ? 'TiBo' : comment.italic ? 'TiIt' : 'TiRo')
+          : isCourier ? (comment.bold && comment.italic ? 'CoBI' : comment.bold ? 'CoBo' : comment.italic ? 'CoOb' : 'Cour')
+          : (comment.bold && comment.italic ? 'HeBI' : comment.bold ? 'HeBo' : comment.italic ? 'HeIt' : 'Helv');
         const da = '/' + fontKey + ' ' + Math.max(6, Math.min(48, comment.fontSize || 11)) + ' Tf ' + fgRgb.map(value => value.toFixed(4)).join(' ') + ' rg';
         const annotationDict = pdf.context.obj({
           Type: 'Annot', Subtype: 'FreeText', Rect: rect,
@@ -2087,8 +2090,17 @@ export default function App() {
           DA: PDFString.of(da),
           DR: { Font: {
             Helv: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica' }),
+            HeBo: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica-Bold' }),
+            HeIt: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica-Oblique' }),
+            HeBI: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica-BoldOblique' }),
             TiRo: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Times-Roman' }),
-            Cour: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Courier' })
+            TiBo: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Times-Bold' }),
+            TiIt: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Times-Italic' }),
+            TiBI: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Times-BoldItalic' }),
+            Cour: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Courier' }),
+            CoBo: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Courier-Bold' }),
+            CoOb: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Courier-Oblique' }),
+            CoBI: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Courier-BoldOblique' })
           }},
           BS: { Type: 'Border', W: 1, S: PDFName.of('S') },
           DS: PDFString.of('font-size: ' + (comment.fontSize || 11) + 'pt; color: #' + fg + '; font-weight: ' + (comment.bold ? 'bold' : 'normal') + '; font-style: ' + (comment.italic ? 'italic' : 'normal') + ';')
