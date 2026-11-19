@@ -287,30 +287,55 @@ const PDF_FONT_STYLE: Record<string, { regular: string; bold: string; italic: st
 function readPdfFontMetadata(pdfPage: any, item: any, styles: any) {
   let embeddedFont: any = null;
   try {
+    // getTextContent resolves the page's font dependencies before returning.
+    // commonObjs contains the decoded PDF.js Font, not just the CSS font name.
     embeddedFont = pdfPage?.commonObjs?.get?.(item.fontName) || null;
   } catch {
     embeddedFont = null;
   }
   const style = styles?.[item.fontName] || {};
-  // PDF.js can expose the actual face name on the loaded font, while the
-  // text item's fontName may only be an internal resource key (for example g_d0_f3).
-  const rawName = String(
-    embeddedFont?.name || embeddedFont?.loadedName || embeddedFont?.fallbackName ||
-    style.fontFamily || item.fontName || ''
-  ).replace(/^[A-Z]{6,8}\+/, '').trim();
+  const fontDescriptor = embeddedFont?.fontDescriptor || embeddedFont?.descriptor || {};
+  const fontProperties = embeddedFont?.properties || {};
+  const names = [
+    embeddedFont?.name, embeddedFont?.loadedName, embeddedFont?.fallbackName,
+    embeddedFont?.fontName, embeddedFont?.familyName, style.fontFamily, item.fontName
+  ].filter(value => value !== undefined && value !== null && String(value).trim());
+  // Prefer the real face name, but retain every PDF.js name as a style signal.
+  const rawName = String(names[0] || '').replace(/^[A-Z]{6,8}\\+/, '').trim();
   const family = String(embeddedFont?.fontFamily || style.fontFamily || '').trim();
-  const descriptor = [rawName, family, style.fontWeight, style.fontStyle, embeddedFont?.fontWeight]
-    .filter(value => value !== undefined && value !== null).join(' ');
-  const numericWeight = Number(style.fontWeight ?? embeddedFont?.fontWeight);
-  const bold = embeddedFont?.bold === true || embeddedFont?.black === true ||
-    style.bold === true || style.black === true || (Number.isFinite(numericWeight) && numericWeight >= 600) ||
-    /bold|black|heavy|demi|semibold|extrabold|ultrabold|mediumitalic|mediummt|bdmt|bd\b|\bblackmt/i.test(descriptor);
+  const descriptor = [
+    ...names, family, style.fontWeight, style.fontStyle, embeddedFont?.fontWeight,
+    embeddedFont?.weight, fontDescriptor?.fontName, fontDescriptor?.fontWeight,
+    fontProperties?.fontName, fontProperties?.fontWeight
+  ].filter(value => value !== undefined && value !== null).join(' ');
+  const numericWeights = [
+    style.fontWeight, embeddedFont?.fontWeight, embeddedFont?.weight,
+    fontDescriptor?.fontWeight, fontProperties?.fontWeight
+  ].map(value => Number(value)).filter(value => Number.isFinite(value));
+  // PDF FontDescriptor flag bit 18 (262144) is ForceBold. Some producers
+  // preserve this bit even when the subset font's PostScript name says Regular.
+  const flagValues = [
+    embeddedFont?.flags, embeddedFont?.fontFlags, fontDescriptor?.flags,
+    fontProperties?.flags
+  ].map(value => Number(value)).filter(value => Number.isFinite(value));
+  const forceBold = flagValues.some(flags => (flags & 262144) !== 0);
+  const truthyStyle = (...values: any[]) => values.some(value =>
+    value === true || value === 1 || (typeof value === 'string' && /^(true|bold|black|yes)$/i.test(value.trim()))
+  );
+  const bold = forceBold ||
+    truthyStyle(embeddedFont?.bold, embeddedFont?.black, embeddedFont?.isBold,
+      style.bold, style.black, style.isBold, fontDescriptor?.bold, fontProperties?.bold) ||
+    numericWeights.some(weight => weight >= 600) ||
+    /bold|black|heavy|demi|semibold|extrabold|ultrabold|mediumitalic|mediummt|bdmt|bd\\b|\\bblackmt/i.test(descriptor);
+  const italic = truthyStyle(embeddedFont?.italic, embeddedFont?.isItalic,
+    style.italic, style.isItalic, fontDescriptor?.italic, fontProperties?.italic) ||
+    flagValues.some(flags => (flags & 64) !== 0) || /italic|oblique/i.test(descriptor);
   return {
     fontName: rawName,
     fontFamily: family,
     bold,
-    italic: embeddedFont?.italic === true || style.italic === true || /italic|oblique/i.test(descriptor),
-    underline: embeddedFont?.underline === true || style.underline === true || /underline/i.test(descriptor)
+    italic,
+    underline: truthyStyle(embeddedFont?.underline, style.underline) || /underline/i.test(descriptor)
   };
 }
 
