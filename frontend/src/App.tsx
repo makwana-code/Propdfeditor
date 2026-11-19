@@ -1787,7 +1787,7 @@ export default function App() {
         // actually changes; restoring the original text removes the mask again.
         next.coverOriginal = patch.text !== (a.originalText ?? '') || !!next.formatChanged;
       }
-      if (a.sourceHitId && next.coverOriginal && typeof patch.text === 'string') {
+      if (typeof patch.text === 'string') {
         const targetCanvas = continuousView ? continuousCanvasRefs.current.get(a.page) : canvasRef.current;
         const metrics = pageMetricsRef.current.get(a.page);
         const pageWidth = targetCanvas?.clientWidth || metrics?.width || pageSizeRef.current.width || 1;
@@ -1799,15 +1799,30 @@ export default function App() {
         const fontWeight = next.bold ? '700' : '400';
         const fontStyle = next.italic ? 'italic' : 'normal';
         if (measure) measure.font = fontStyle+' '+fontWeight+' '+fontPx+'px "'+next.font+'"';
-        const estimatedPixels = Math.max(...patch.text.split('\n').map(line => measure?.measureText(line || ' ').width || line.length*fontPx*.56), fontPx);
-        const estimatedWidth = (estimatedPixels + 8) / pageWidth;
-        const lineCount = Math.max(1, patch.text.split('\n').length);
-        const estimatedHeight = (lineCount * fontPx * 1.2 + 4) / pageHeight;
-        // Keep the original point size unchanged. Expand the editable replacement box
-        // to fit the new string; the export renderer wraps at the page edge rather
-        // than reducing the detected font size.
-        next.w = Math.min(1 - a.x, Math.max(a.w, estimatedWidth));
-        next.h = Math.min(1 - a.y, Math.max(a.h, estimatedHeight));
+        const availableWidth = Math.max(12, (1 - a.x) * pageWidth - 8);
+        let visualLineCount = 0;
+        let widestLine = 0;
+        for (const sourceLine of patch.text.split(/\r?\n/)) {
+          const words = sourceLine.split(/\s+/).filter(Boolean);
+          if (!words.length) { visualLineCount += 1; continue; }
+          let currentLine = '';
+          for (const word of words) {
+            const candidate = currentLine ? currentLine + ' ' + word : word;
+            const candidateWidth = measure?.measureText(candidate).width || candidate.length * fontPx * .56;
+            if (currentLine && candidateWidth > availableWidth) {
+              widestLine = Math.max(widestLine, measure?.measureText(currentLine).width || currentLine.length * fontPx * .56);
+              visualLineCount += 1;
+              currentLine = word;
+            } else currentLine = candidate;
+          }
+          widestLine = Math.max(widestLine, measure?.measureText(currentLine).width || currentLine.length * fontPx * .56);
+          visualLineCount += 1;
+        }
+        const fittedWidth = Math.min(availableWidth, Math.max(12, widestLine + 8));
+        const fittedHeight = Math.max(fontPx * 1.25 + 6, visualLineCount * fontPx * 1.2 + 6);
+        // Keep the chosen font size; resize the box to the actual wrapped text.
+        next.w = Math.min(1 - a.x, fittedWidth / pageWidth);
+        next.h = Math.min(1 - a.y, fittedHeight / pageHeight);
       }
       return next;
     }));
@@ -2080,7 +2095,16 @@ export default function App() {
         const { width, height } = target.getSize();
         const boxX = comment.boxX ?? Math.min(.74, Math.max(.02, comment.x + .02));
         const boxY = comment.boxY ?? Math.min(.88, Math.max(.02, comment.y + .01));
-        const rect = [boxX * width, height - (boxY + .12) * height, Math.min(width, (boxX + .25) * width), height - boxY * height];
+        // Use a compact, text-sized annotation rectangle instead of the old
+        // fixed quarter-page box. This also gives Acrobat a predictable AP size.
+        const fontSize = Math.max(6, Math.min(48, comment.fontSize || 11));
+        const lines = (comment.text || '').split(/\r?\n/);
+        const maxChars = Math.max(1, ...lines.map(line => line.length));
+        const boxWidth = Math.max(72, Math.min(260, maxChars * fontSize * .58 + 16));
+        const boxHeight = Math.max(fontSize * 1.8 + 12, lines.length * fontSize * 1.35 + 12);
+        const rectWidth = Math.min(width - boxX * width, boxWidth);
+        const rectHeight = Math.min(height - boxY * height, boxHeight);
+        const rect = [boxX * width, height - (boxY * height + rectHeight), boxX * width + rectWidth, height - boxY * height];
         const bg = (comment.boxColor || '#fff7d6').replace('#', '');
         const fg = (comment.textColor || '#222222').replace('#', '');
         const bgRgb = [0,2,4].map(index => parseInt(bg.slice(index,index+2),16)/255);
@@ -2117,6 +2141,34 @@ export default function App() {
           BS: { Type: 'Border', W: 1, S: PDFName.of('S') },
           DS: PDFString.of('font-size: ' + (comment.fontSize || 11) + 'pt; color: #' + fg + '; font-weight: ' + (comment.bold ? 'bold' : 'normal') + '; font-style: ' + (comment.italic ? 'italic' : 'normal') + ';')
         });
+        // Supply an explicit normal appearance stream. Without /AP some PDF
+        // viewers regenerate FreeText appearance from /DA differently, which
+        // can cause doubled/overlapping comment text after download.
+        const appearanceLines = (comment.text || '').split(/\r?\n/);
+        const apFontSize = fontSize;
+        const apLeading = apFontSize * 1.25;
+        const apTop = rectHeight - 7 - apFontSize;
+        const apText = appearanceLines.map((line,index) =>
+          'BT /' + fontKey + ' ' + apFontSize + ' Tf ' +
+          fgRgb.map(value => value.toFixed(4)).join(' ') + ' rg 1 0 0 1 8 ' +
+          Math.max(4, apTop - index * apLeading).toFixed(2) + ' Tm ' +
+          PDFHexString.fromText(line).toString() + ' Tj ET'
+        ).join('\n');
+        const apContent = 'q ' + bgRgb.map(value => value.toFixed(4)).join(' ') +
+          ' rg 0 0 ' + rectWidth.toFixed(2) + ' ' + rectHeight.toFixed(2) +
+          ' re f Q\n' + apText;
+        const apResources = pdf.context.obj({ Font: {
+          [fontKey]: pdf.context.obj({ Type:'Font', Subtype:'Type1', BaseFont:
+            fontKey.startsWith('Ti') ? (fontKey==='TiBo'?'Times-Bold':fontKey==='TiIt'?'Times-Italic':fontKey==='TiBI'?'Times-BoldItalic':'Times-Roman') :
+            fontKey.startsWith('Co') ? (fontKey==='CoBo'?'Courier-Bold':fontKey==='CoOb'?'Courier-Oblique':fontKey==='CoBI'?'Courier-BoldOblique':'Courier') :
+            (fontKey==='HeBo'?'Helvetica-Bold':fontKey==='HeIt'?'Helvetica-Oblique':fontKey==='HeBI'?'Helvetica-BoldOblique':'Helvetica')
+          })
+        }});
+        const apStream = pdf.context.stream(apContent, pdf.context.obj({
+          Type:'XObject', Subtype:'Form', FormType:1,
+          BBox:[0,0,rectWidth,rectHeight], Resources:apResources
+        }));
+        annotationDict.set(PDFName.of('AP'), pdf.context.obj({ N: pdf.context.register(apStream) }));
         target.node.addAnnot(pdf.context.register(annotationDict));
       }
       for (const stroke of strokes) {
