@@ -2164,10 +2164,10 @@ export default function App() {
             (fontKey==='HeBo'?'Helvetica-Bold':fontKey==='HeIt'?'Helvetica-Oblique':fontKey==='HeBI'?'Helvetica-BoldOblique':'Helvetica')
           })
         }});
-        const apStream = pdf.context.stream(apContent, pdf.context.obj({
+        const apStream = pdf.context.stream(apContent, {
           Type:'XObject', Subtype:'Form', FormType:1,
-          BBox:[0,0,rectWidth,rectHeight], Resources:apResources as any
-        }));
+          BBox:[0,0,rectWidth,rectHeight], Resources:apResources
+        } as any);
         annotationDict.set(PDFName.of('AP'), pdf.context.obj({ N: pdf.context.register(apStream) }));
         target.node.addAnnot(pdf.context.register(annotationDict));
       }
