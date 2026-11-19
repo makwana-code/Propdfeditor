@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import type { MouseEvent, PointerEvent as ReactPointerEvent } from 'react';
 import * as pdfjs from 'pdfjs-dist';
 import workerUrl from 'pdfjs-dist/build/pdf.worker.min.mjs?url';
-import { PDFDocument, StandardFonts, rgb, degrees } from 'pdf-lib';
+import { PDFDocument, StandardFonts, PDFName, PDFString, PDFHexString, rgb, degrees } from 'pdf-lib';
 import fontkit from '@pdf-lib/fontkit';
 
 import { createClient } from '@supabase/supabase-js';
@@ -348,7 +348,7 @@ function fontStyleFor(annotation: TextAnnotation) {
 
 type TextAnnotation = { id: string; page: number; sourceFontName?: string; sourceFontFamily?: string; sourceFontSize?: number; formatChanged?: boolean; ocrRebuilt?: boolean; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
 type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; color?: string; cleanBackground?: boolean };
-type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string };
+type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string; boxColor?: string; textColor?: string; fontSize?: number; fontFamily?: string; bold?: boolean; italic?: boolean };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number; cleanBackground?: boolean };
 
 // OCR returns individual word boxes. Group nearby words into line-sized
@@ -417,6 +417,9 @@ export default function App() {
   const [tool, setTool] = useState<'select'|'edit'|'text'|'comment'|'draw'|'erase'|'whiteout'>('edit');
   const [annotations, setAnnotations] = useState<TextAnnotation[]>([]);
   const [comments, setComments] = useState<PdfComment[]>([]);
+  const [selectedCommentId, setSelectedCommentId] = useState<string | null>(null);
+  const selectedComment = useMemo(() => comments.find(comment => comment.id === selectedCommentId) || null, [comments, selectedCommentId]);
+  function updateComment(id: string, patch: Partial<PdfComment>) { setComments(old => old.map(comment => comment.id === id ? { ...comment, ...patch } : comment)); }
   const [strokes, setStrokes] = useState<DrawStroke[]>([]);
   const [drawColor, setDrawColor] = useState('#d62728');
   const [eraseBrushColor, setEraseBrushColor] = useState('#ffffff');
@@ -1546,9 +1549,12 @@ export default function App() {
     const comment: PdfComment = {
       id: crypto.randomUUID(), page: targetPage, x: point.x, y: point.y,
       boxX: Math.min(.74, Math.max(.02, point.x + .02)),
-      boxY: Math.min(.88, Math.max(.02, point.y + .01)), text: entered
+      boxY: Math.min(.88, Math.max(.02, point.y + .01)), text: entered,
+      boxColor: '#fff7d6', textColor: '#222222', fontSize: 11, fontFamily: 'Helvetica', bold: false, italic: false
     };
     setComments(old => [...old, comment]);
+    setSelectedCommentId(comment.id);
+    setSelectedId(null);
     setCommentDraft('');
     setTool('select');
     setStatus('Comment added at the selected position on page ' + targetPage + '.');
@@ -2338,7 +2344,7 @@ export default function App() {
       <input className="toolbar-color" aria-label="Text colour" type="color" value={fontColor} onChange={e=>{setFontColor(e.target.value);if(selected)updateAnnotation(selected.id,{color:e.target.value})}}/>
       <select className="toolbar-select" aria-label="Font size" value={selected?.size||fontSize} onChange={e=>{const v=Number(e.target.value);setFontSize(v);if(selected)updateAnnotation(selected.id,{size:v})}}>{[8,9,10,11,12,14,16,18,20,24,28,32,36,48].map(v=><option key={v} value={v}>{v}px</option>)}</select>
       <span className="toolbar-divider"/>
-      <button className="toolbar-button" disabled={!selected} onClick={()=>{if(selected){setAnnotations(old=>old.filter(x=>x.id!==selected.id));setSelectedId(null)}}}>▤ Remove</button>
+      <button className="toolbar-button" disabled={!selected} onClick={()=>selected&&deleteTextBox(selected.id)}>▤ Remove</button>
       <span className="toolbar-divider"/>
       <label className="toolbar-page">Page <button className="toolbar-button toolbar-page-prev" type="button" title="Previous page" aria-label="Previous page" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
@@ -2402,7 +2408,7 @@ export default function App() {
               {editingTextId===a.id && <button type="button" className="text-edit-done" onClick={e=>{e.stopPropagation();setEditingTextId(null);if(a.sourceHitId&&a.text===(a.originalText||'')&&!a.formatChanged){setAnnotations(old=>old.filter(item=>item.id!==a.id));setSelectedId(null);setStatus('Original PDF text selection closed. No changes were made to its font, size or position.');}else{setSelectedId(a.id);setAnnotations(old=>old.map(item=>item.id===a.id&&item.sourceHitId?{...item,coverOriginal:true}:item));setStatus('Text edit applied on the page. Download or Save to commit it into the PDF.');}}}>Done</button>}
               {editingTextId===a.id && <span className="resize-label">Drag to resize</span>}
             </div>)}
-            {contextMenu && <div className="pdf-context-menu" style={{left:Math.min(contextMenu.x,Math.max(8,(canvasRef.current?.clientWidth||500)-170)),top:Math.min(contextMenu.y,Math.max(8,(canvasRef.current?.clientHeight||700)-100))}} onClick={e=>e.stopPropagation()}>{tool!=='select'&&<button type="button" onClick={()=>{const hit=contextMenu.hit;const ann=contextMenu.annotation;setContextMenu(null);if(ann){setSelectedId(ann.id);setEditingTextId(ann.id);setTool('edit');}else if(hit){editExistingText(hit);}else{setStatus('Right-click directly on text to edit it.');}}}>✎ Edit Text</button>}<button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);addCommentAt(point);}}>▤ Add Comment</button>{contextMenu.annotation&&<><button type="button" onClick={()=>{copiedAnnotationRef.current={...contextMenu.annotation!};setSelectedId(contextMenu.annotation!.id);setContextMenu(null);setStatus('Text box copied. Press Ctrl+V to paste.');}}>▣ Copy</button><button type="button" disabled={!copiedAnnotationRef.current} onClick={()=>{const point=contextMenu.point;setContextMenu(null);pasteCopiedAnnotation(point);}}>▣ Paste</button><button type="button" onClick={()=>{const id=contextMenu.annotation!.id;setAnnotations(old=>old.filter(item=>item.id!==id));setSelectedId(null);setEditingTextId(null);setContextMenu(null);setStatus('Text box deleted.');}}>⌫ Delete Text</button></>}{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);markNativeTextDeleted(hit);}}>⌫ Delete Original Text</button>}<button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}\n            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map(c=>{const bx=(c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*1000;const by=(c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*1000;const d='M '+(c.x*1000)+' '+(c.y*1000)+' L '+(bx+120)+' '+(by+35);return <g key={c.id}><path d={d} stroke="#d28b27" strokeOpacity="0.001" strokeWidth="24" fill="none" style={{pointerEvents:'stroke',cursor:'grab',touchAction:'none'}} onPointerDown={e=>beginConnectorMove(e,c)} aria-label="Drag dotted comment connector"/><path d={d} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5" style={{pointerEvents:'none'}}/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3" style={{pointerEvents:'none'}}/></g>})}</svg>
+            {contextMenu && <div className="pdf-context-menu" style={{left:Math.min(contextMenu.x,Math.max(8,(canvasRef.current?.clientWidth||500)-170)),top:Math.min(contextMenu.y,Math.max(8,(canvasRef.current?.clientHeight||700)-100))}} onClick={e=>e.stopPropagation()}>{tool!=='select'&&<button type="button" onClick={()=>{const hit=contextMenu.hit;const ann=contextMenu.annotation;setContextMenu(null);if(ann){setSelectedId(ann.id);setEditingTextId(ann.id);setTool('edit');}else if(hit){editExistingText(hit);}else{setStatus('Right-click directly on text to edit it.');}}}>✎ Edit Text</button>}<button type="button" onClick={()=>{const point=contextMenu.point;setContextMenu(null);addCommentAt(point);}}>▤ Add Comment</button>{contextMenu.annotation&&<><button type="button" onClick={()=>{copiedAnnotationRef.current={...contextMenu.annotation!};setSelectedId(contextMenu.annotation!.id);setContextMenu(null);setStatus('Text box copied. Press Ctrl+V to paste.');}}>▣ Copy</button><button type="button" disabled={!copiedAnnotationRef.current} onClick={()=>{const point=contextMenu.point;setContextMenu(null);pasteCopiedAnnotation(point);}}>▣ Paste</button><button type="button" onClick={()=>{const id=contextMenu.annotation!.id;deleteTextBox(id);setContextMenu(null);}}>⌫ Delete Text</button></>}{contextMenu.hit&&<button type="button" onClick={()=>{const hit=contextMenu.hit!;setContextMenu(null);markNativeTextDeleted(hit);}}>⌫ Delete Original Text</button>}<button type="button" onClick={()=>setContextMenu(null)}>Cancel</button></div>}\n            <svg className="comment-connectors" viewBox="0 0 1000 1000" preserveAspectRatio="none" style={{pointerEvents:'none'}}>{comments.filter(c=>c.page===page).map(c=>{const bx=(c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*1000;const by=(c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*1000;const d='M '+(c.x*1000)+' '+(c.y*1000)+' L '+(bx+120)+' '+(by+35);return <g key={c.id}><path d={d} stroke="#d28b27" strokeOpacity="0.001" strokeWidth="24" fill="none" style={{pointerEvents:'stroke',cursor:'grab',touchAction:'none'}} onPointerDown={e=>beginConnectorMove(e,c)} aria-label="Drag dotted comment connector"/><path d={d} stroke="#d28b27" strokeWidth="2.4" fill="none" strokeDasharray="6 5" style={{pointerEvents:'none'}}/><circle cx={c.x*1000} cy={c.y*1000} r="8" fill="#d28b27" stroke="#fff" strokeWidth="3" style={{pointerEvents:'none'}}/></g>})}</svg>
             {comments.filter(c=>c.page===page).map((c,i)=><div key={c.id} className="comment-note" style={{'--comment-x':((c.boxX??Math.min(.74,Math.max(.02,c.x+.02)))*100)+'%','--comment-y':((c.boxY??Math.min(.88,Math.max(.02,c.y+.01)))*100)+'%'} as React.CSSProperties} onPointerDown={e=>beginCommentMove(e,c)} title="Drag anywhere on this comment box to move it"><b className="comment-drag-handle">Comment {i+1} · Page {c.page} <span>↕ Move</span></b><span>{c.text}</span><button type="button" className="comment-delete-button" aria-label="Delete comment" title="Delete comment" style={{position:'absolute',right:6,top:6,zIndex:30,pointerEvents:'auto',touchAction:'manipulation'}} onPointerDown={e=>e.stopPropagation()} onMouseDown={e=>e.stopPropagation()} onClick={e=>{e.preventDefault();e.stopPropagation();setComments(old=>old.filter(v=>v.id!==c.id));setStatus('Comment deleted.')}}>×</button></div>)}
           </div></div>) : <div className="studio-empty">
             <div className="studio-pdf-icon">PDF</div><h2>Open a PDF to start</h2>
