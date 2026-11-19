@@ -391,6 +391,8 @@ export default function App() {
   const [activeStyleId, setActiveStyleId] = useState('body');
   const [formatPainterStyle, setFormatPainterStyle] = useState<{font:string;size:number;color:string;bold:boolean;italic:boolean;underline:boolean;align:'left'|'center'|'right'}|null>(null);
   const [formatPainterActive, setFormatPainterActive] = useState(false);
+  // Synchronous one-shot guard: a copied style can be pasted only once.
+  const formatPainterArmedRef = useRef(false);
   const [formatPainterSourceHit, setFormatPainterSourceHit] = useState<PdfTextHit | null>(null);
   const formatPainterSelectingRef = useRef(false);
   const formatPainterSelectionHitsRef = useRef<PdfTextHit[]>([]);
@@ -575,6 +577,7 @@ export default function App() {
       align: source.align || 'left'
     });
     setFormatPainterSourceHit(isHit ? source as PdfTextHit : null);
+    formatPainterArmedRef.current = true;
     setFormatPainterActive(true);
     setTool('select');
     setEditingTextId(null);
@@ -643,6 +646,7 @@ export default function App() {
 
   function startFormatPainter() {
     if (formatPainterActive) {
+      formatPainterArmedRef.current = false;
       setFormatPainterActive(false);
       setFormatPainterSourceHit(null);
       setStatus('Format Painter cancelled.');
@@ -657,7 +661,9 @@ export default function App() {
   }
 
   function applyFormatPainterToHit(hit: PdfTextHit) {
-    if (!formatPainterActive || !formatPainterStyle) return false;
+    if (!formatPainterArmedRef.current || !formatPainterActive || !formatPainterStyle) return false;
+    // Consume the copied format immediately so a second destination cannot reuse it.
+    formatPainterArmedRef.current = false;
     const existing = annotations.find(item => item.sourceHitId === hit.id);
     if (existing) return applyFormatPainter(existing);
     const appearance = sampleTextAppearance(hit);
@@ -682,17 +688,19 @@ export default function App() {
     // Match Word's single-click Format Painter: apply once, then return to normal selection.
     setFormatPainterActive(false);
     setFormatPainterSourceHit(null);
-    setStatus('Formatting applied to the selected PDF text.');
+    setStatus('Formatting applied. Copy Formatting again to use Format Painter on another text.');
     return true;
   }
 
   function applyFormatPainter(target: TextAnnotation) {
     // The destination may already be selected when its context menu is opened.
     // Do not reject it merely because selectedId matches the destination.
-    if (!formatPainterActive || !formatPainterStyle) {
-      setStatus('Format Painter is not active. Select the source formatting first.');
+    if (!formatPainterArmedRef.current || !formatPainterActive || !formatPainterStyle) {
+      setStatus('Format Painter is not active. Copy formatting from a source text first.');
       return false;
     }
+    // Consume the copied format immediately; a new Copy Formatting action is required for the next paste.
+    formatPainterArmedRef.current = false;
     const style = {
       font: formatPainterStyle.font || target.font || 'Arial',
       size: Number.isFinite(formatPainterStyle.size) && formatPainterStyle.size > 0 ? formatPainterStyle.size : target.size,
@@ -726,7 +734,7 @@ export default function App() {
     // One click copies formatting to one destination, as in Microsoft Word.
     setFormatPainterActive(false);
     setFormatPainterSourceHit(null);
-    setStatus('Formatting applied to the selected text box.');
+    setStatus('Formatting applied. Copy Formatting again to use Format Painter on another text.');
     return true;
   }
 
