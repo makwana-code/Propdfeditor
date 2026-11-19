@@ -292,16 +292,25 @@ function readPdfFontMetadata(pdfPage: any, item: any, styles: any) {
     embeddedFont = null;
   }
   const style = styles?.[item.fontName] || {};
-  const rawName = String(embeddedFont?.name || embeddedFont?.loadedName || embeddedFont?.fallbackName || item.fontName || '')
-    .replace(/^[A-Z]{6,8}\\+/, '').trim();
+  // PDF.js can expose the actual face name on the loaded font, while the
+  // text item's fontName may only be an internal resource key (for example g_d0_f3).
+  const rawName = String(
+    embeddedFont?.name || embeddedFont?.loadedName || embeddedFont?.fallbackName ||
+    style.fontFamily || item.fontName || ''
+  ).replace(/^[A-Z]{6,8}\+/, '').trim();
   const family = String(embeddedFont?.fontFamily || style.fontFamily || '').trim();
-  const descriptor = rawName + ' ' + family;
+  const descriptor = [rawName, family, style.fontWeight, style.fontStyle, embeddedFont?.fontWeight]
+    .filter(value => value !== undefined && value !== null).join(' ');
+  const numericWeight = Number(style.fontWeight ?? embeddedFont?.fontWeight);
+  const bold = embeddedFont?.bold === true || embeddedFont?.black === true ||
+    style.bold === true || style.black === true || (Number.isFinite(numericWeight) && numericWeight >= 600) ||
+    /bold|black|heavy|demi|semibold|extrabold|ultrabold|mediumitalic|mediummt|bdmt|bd\b|\bblackmt/i.test(descriptor);
   return {
     fontName: rawName,
     fontFamily: family,
-    bold: embeddedFont?.bold === true || embeddedFont?.black === true || /bold|black|heavy|demi|semibold/i.test(descriptor),
-    italic: embeddedFont?.italic === true || /italic|oblique/i.test(descriptor),
-    underline: /underline/i.test(descriptor)
+    bold,
+    italic: embeddedFont?.italic === true || style.italic === true || /italic|oblique/i.test(descriptor),
+    underline: embeddedFont?.underline === true || style.underline === true || /underline/i.test(descriptor)
   };
 }
 
@@ -901,7 +910,15 @@ export default function App() {
           };
           for (const hit of line) {
             const previous=block[block.length-1];
-            if (previous && hit.x-(previous.x+previous.w)>Math.max(hit.h,previous.h)*1.8) flush();
+            // Keep adjacent regular and bold runs separate. Combining them into
+            // one line target and taking a majority vote hid short bold words.
+            const styleChanged = previous && (
+              !!previous.bold !== !!hit.bold ||
+              !!previous.italic !== !!hit.italic ||
+              String(previous.fontFamily || previous.fontName || '').toLowerCase() !== String(hit.fontFamily || hit.fontName || '').toLowerCase() ||
+              Math.abs(previous.fontSize-hit.fontSize) > Math.max(previous.fontSize,hit.fontSize)*0.08
+            );
+            if (previous && (styleChanged || hit.x-(previous.x+previous.w)>Math.max(hit.h,previous.h)*1.8)) flush();
             block.push(hit);
           }
           flush();
