@@ -284,6 +284,27 @@ const PDF_FONT_STYLE: Record<string, { regular: string; bold: string; italic: st
   sans: { regular: StandardFonts.Helvetica, bold: StandardFonts.HelveticaBold, italic: StandardFonts.HelveticaOblique, boldItalic: StandardFonts.HelveticaBoldOblique },
   mono: { regular: StandardFonts.Courier, bold: StandardFonts.CourierBold, italic: StandardFonts.CourierOblique, boldItalic: StandardFonts.CourierBoldOblique }
 };
+function readPdfFontMetadata(pdfPage: any, item: any, styles: any) {
+  let embeddedFont: any = null;
+  try {
+    embeddedFont = pdfPage?.commonObjs?.get?.(item.fontName) || null;
+  } catch {
+    embeddedFont = null;
+  }
+  const style = styles?.[item.fontName] || {};
+  const rawName = String(embeddedFont?.name || embeddedFont?.loadedName || embeddedFont?.fallbackName || item.fontName || '')
+    .replace(/^[A-Z]{6,8}\\+/, '').trim();
+  const family = String(embeddedFont?.fontFamily || style.fontFamily || '').trim();
+  const descriptor = rawName + ' ' + family;
+  return {
+    fontName: rawName,
+    fontFamily: family,
+    bold: embeddedFont?.bold === true || embeddedFont?.black === true || /bold|black|heavy|demi|semibold/i.test(descriptor),
+    italic: embeddedFont?.italic === true || /italic|oblique/i.test(descriptor),
+    underline: /underline/i.test(descriptor)
+  };
+}
+
 function fontStyleFor(annotation: TextAnnotation) {
   const family = annotation.font.toLowerCase();
   const kind = family.includes('courier') || family.includes('consolas') ? 'mono' : ['times','cambria','georgia','garamond','antiqua','palatino','bookman'].some(v => family.includes(v)) ? 'serif' : 'sans';
@@ -827,6 +848,7 @@ export default function App() {
         const rawHits: PdfTextHit[] = (content.items as any[])
           .filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform))
           .map((item:any,index:number) => {
+            const fontMeta = readPdfFontMetadata(pdfPage, item, content.styles);
             const m = pdfjs.Util.transform(viewport.transform, item.transform);
             const glyphHeight = Math.max(3, Math.hypot(m[2], m[3]));
             const ux = Math.hypot(m[0], m[1]) || 1;
@@ -847,7 +869,7 @@ export default function App() {
             const bottom = Math.min(viewport.height, Math.max(...corners.map(p=>p[1])) + pad);
             return { id: page + '-' + index, page, text:item.str, x:left/viewport.width, y:top/viewport.height,
               w:Math.max(.004,(right-left)/viewport.width), h:Math.max(.012,(bottom-top)/viewport.height),
-              fontSize:glyphHeight/Math.max(.01,viewport.scale), fontName:item.fontName, fontFamily:content.styles?.[item.fontName]?.fontFamily, bold:/bold|black|heavy|demi|semibold/i.test(String(item.fontName||'')), italic:/italic|oblique/i.test(String(item.fontName||'')), underline:/underline/i.test(String(item.fontName||'')), align:'left' };
+              fontSize:glyphHeight/Math.max(.01,viewport.scale), fontName:fontMeta.fontName, fontFamily:fontMeta.fontFamily, bold:fontMeta.bold, italic:fontMeta.italic, underline:fontMeta.underline, align:'left' };
           });
         // Build selectable text-line blocks from adjacent PDF text runs. This lets
         // users replace a whole visible line instead of fighting tiny per-run targets.
@@ -982,6 +1004,7 @@ export default function App() {
           await pdfPage.render({ canvasContext: ctx, viewport }).promise;
           const content = await pdfPage.getTextContent();
           (content.items as any[]).filter(item => typeof item.str === 'string' && item.str.trim() && Array.isArray(item.transform)).forEach((item:any,index:number) => {
+             const fontMeta = readPdfFontMetadata(pdfPage, item, content.styles);
             const m = pdfjs.Util.transform(viewport.transform, item.transform);
             const glyphHeight = Math.max(3, Math.hypot(m[2], m[3]));
             const ux = Math.hypot(m[0], m[1]) || 1, vx = Math.hypot(m[2], m[3]) || glyphHeight;
@@ -991,7 +1014,7 @@ export default function App() {
             const pad=.75*(window.devicePixelRatio||1);
             const left=Math.max(0,Math.min(...corners.map(p=>p[0]))-pad), top=Math.max(0,Math.min(...corners.map(p=>p[1]))-pad);
             const right=Math.min(viewport.width,Math.max(...corners.map(p=>p[0]))+pad), bottom=Math.min(viewport.height,Math.max(...corners.map(p=>p[1]))+pad);
-            allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale),fontName:item.fontName,fontFamily:content.styles?.[item.fontName]?.fontFamily,bold:/bold|black|heavy|demi|semibold/i.test(String(item.fontName||'')),italic:/italic|oblique/i.test(String(item.fontName||'')),underline:/underline/i.test(String(item.fontName||'')),align:'left'});
+            allHits.push({id:pageNumber+'-'+index,page:pageNumber,text:item.str,x:left/viewport.width,y:top/viewport.height,w:Math.max(.004,(right-left)/viewport.width),h:Math.max(.012,(bottom-top)/viewport.height),fontSize:glyphHeight/Math.max(.01,viewport.scale),fontName:fontMeta.fontName,fontFamily:fontMeta.fontFamily,bold:fontMeta.bold,italic:fontMeta.italic,underline:fontMeta.underline,align:'left'});
           });
         }
         if (!cancelled) {
