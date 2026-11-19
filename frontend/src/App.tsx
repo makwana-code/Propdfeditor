@@ -2061,6 +2061,40 @@ export default function App() {
           if (annotation.underline) target.drawLine({ start:{x:alignedX,y:lineY-1.5}, end:{x:alignedX+lineWidth,y:lineY-1.5}, thickness:0.6, color });
         });
       }
+      // Export comments as native PDF FreeText annotations so Adobe Acrobat
+      // recognises them in its Comments pane instead of flattening them into pixels.
+      for (const comment of comments) {
+        const target = pdf.getPage(comment.page - 1);
+        const { width, height } = target.getSize();
+        const boxX = comment.boxX ?? Math.min(.74, Math.max(.02, comment.x + .02));
+        const boxY = comment.boxY ?? Math.min(.88, Math.max(.02, comment.y + .01));
+        const rect = [boxX * width, height - (boxY + .12) * height, Math.min(width, (boxX + .25) * width), height - boxY * height];
+        const bg = (comment.boxColor || '#fff7d6').replace('#', '');
+        const fg = (comment.textColor || '#222222').replace('#', '');
+        const bgRgb = [0,2,4].map(index => parseInt(bg.slice(index,index+2),16)/255);
+        const fgRgb = [0,2,4].map(index => parseInt(fg.slice(index,index+2),16)/255);
+        const family = (comment.fontFamily || 'Helvetica').toLowerCase();
+        const isTimes = family.includes('times') || family.includes('georgia') || family.includes('cambria');
+        const isCourier = family.includes('courier');
+        const fontKey = isTimes ? 'TiRo' : isCourier ? 'Cour' : 'Helv';
+        const da = '/' + fontKey + ' ' + Math.max(6, Math.min(48, comment.fontSize || 11)) + ' Tf ' + fgRgb.map(value => value.toFixed(4)).join(' ') + ' rg';
+        const annotationDict = pdf.context.obj({
+          Type: 'Annot', Subtype: 'FreeText', Rect: rect,
+          Contents: PDFHexString.fromText(comment.text),
+          T: PDFHexString.fromText('ProPDF Studio'),
+          NM: PDFHexString.fromText(comment.id),
+          F: 4, C: bgRgb, IC: bgRgb, Q: 0,
+          DA: PDFString.of(da),
+          DR: { Font: {
+            Helv: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Helvetica' }),
+            TiRo: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Times-Roman' }),
+            Cour: pdf.context.obj({ Type: 'Font', Subtype: 'Type1', BaseFont: 'Courier' })
+          }},
+          BS: { Type: 'Border', W: 1, S: PDFName.of('S') },
+          DS: PDFString.of('font-size: ' + (comment.fontSize || 11) + 'pt; color: #' + fg + '; font-weight: ' + (comment.bold ? 'bold' : 'normal') + '; font-style: ' + (comment.italic ? 'italic' : 'normal') + ';')
+        });
+        target.node.addAnnot(pdf.context.register(annotationDict));
+      }
       for (const stroke of strokes) {
         const target = pdf.getPage(stroke.page - 1); const { width, height } = target.getSize();
         const color = rgb(parseInt(stroke.color.slice(1,3),16)/255, parseInt(stroke.color.slice(3,5),16)/255, parseInt(stroke.color.slice(5,7),16)/255);
