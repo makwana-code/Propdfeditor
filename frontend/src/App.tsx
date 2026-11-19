@@ -1136,6 +1136,19 @@ export default function App() {
         return;
       }
 
+      // Ctrl+B toggles bold on the currently selected PDF text box.
+      // Keep native browser behavior in unrelated inputs and form fields.
+      if (command && event.key.toLowerCase() === 'b' && selectedId && (!isTyping || !!target?.closest('.pdf-annotation'))) {
+        const current = annotations.find(item => item.id === selectedId);
+        if (current) {
+          event.preventDefault();
+          event.stopPropagation();
+          updateAnnotation(selectedId, { bold: !current.bold });
+          setStatus(!current.bold ? 'Selected text set to Bold.' : 'Bold removed from selected text.');
+          return;
+        }
+      }
+
       // Keep the browser's native undo while the user is typing in a field;
       // otherwise undo the latest editor operation.
       if (command && event.key.toLowerCase() === 'z' && !event.shiftKey) {
