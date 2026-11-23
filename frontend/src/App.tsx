@@ -2443,18 +2443,68 @@ export default function App() {
   async function deleteCurrentPage() {
     if (!document) return;
     if (document.pages <= 1) { setStatus('A PDF must contain at least one page.'); return; }
-    if (!window.confirm('Delete page ' + page + '?')) return;
+
+    const entry = window.prompt(
+      'Enter page numbers or ranges to delete. Examples: 1-15 or 1, 2, 5, 15 or 1-3, 8, 10-12',
+      String(page)
+    );
+    if (entry === null) return;
+    const tokens = entry.split(',').map(value => value.trim()).filter(Boolean);
+    if (!tokens.length) { setStatus('Enter at least one page number or range.'); return; }
+
+    const requested = new Set<number>();
+    for (const token of tokens) {
+      const match = token.match(/^(\d+)(?:\s*[-–]\s*(\d+))?$/);
+      if (!match) {
+        setStatus('Invalid page entry: "' + token + '". Use numbers and ranges such as 1-15, 2, 5.');
+        return;
+      }
+      const start = Number(match[1]);
+      const end = match[2] === undefined ? start : Number(match[2]);
+      if (!Number.isSafeInteger(start) || !Number.isSafeInteger(end) || start < 1 || end < 1 || start > document.pages || end > document.pages) {
+        setStatus('Page numbers must be between 1 and ' + document.pages + '.');
+        return;
+      }
+      if (start > end) {
+        setStatus('Page range "' + token + '" must be entered in ascending order, for example 1-15.');
+        return;
+      }
+      for (let number = start; number <= end; number++) requested.add(number);
+    }
+
+    const pagesToDelete = [...requested].sort((left, right) => left - right);
+    if (pagesToDelete.length >= document.pages) {
+      setStatus('You must keep at least one page in the PDF.');
+      return;
+    }
+    const displayPages = pagesToDelete.length > 30
+      ? pagesToDelete.slice(0, 30).join(', ') + ', … (' + pagesToDelete.length + ' pages total)'
+      : pagesToDelete.join(', ');
+    if (!window.confirm('Delete ' + pagesToDelete.length + ' page(s)?\n\nPages: ' + displayPages)) return;
+
     try {
-      const pdf = await PDFDocument.load(document.bytes.slice(0)); pdf.removePage(page - 1); const bytes = await pdf.save();
+      const deleted = new Set(pagesToDelete);
+      const mapPage = (oldPage: number) => oldPage - pagesToDelete.filter(number => number < oldPage).length;
+      const pdf = await PDFDocument.load(document.bytes.slice(0));
+      // Remove in descending order so each original page index remains valid.
+      [...pagesToDelete].sort((left, right) => right - left).forEach(number => pdf.removePage(number - 1));
+      const bytes = await pdf.save();
       const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
-      setDocument({ file, bytes: new Uint8Array(bytes).buffer as ArrayBuffer, pages: pdf.getPageCount() });      setAnnotations(old => old.filter(a => a.page !== page).map(a => a.page > page ? { ...a, page: a.page - 1 } : a));
-      setComments(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
-      setStrokes(old => old.filter(v => v.page !== page).map(v => v.page > page ? { ...v, page: v.page - 1 } : v));
-      setOcrPages(old => Object.fromEntries(Object.entries(old).filter(([key]) => Number(key) !== page).map(([key, value]) => [String(Number(key) > page ? Number(key) - 1 : Number(key)), value])));
-      setOcrWords(old => Object.fromEntries(Object.entries(old).filter(([key]) => Number(key) !== page).map(([key, value]) => [String(Number(key) > page ? Number(key) - 1 : Number(key)), value])));
-      setBookmarks(old => old.filter(item => item.page !== page).map(item => item.page > page ? { ...item, page: item.page - 1 } : item));
-      setPage(p => Math.min(p, pdf.getPageCount())); setSelectedId(null); setStatus('Page deleted. Page-linked text, comments, drawings, OCR data and bookmarks were adjusted.');
-    } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not delete page.'); }
+      const nextPage = Math.max(1, Math.min(mapPage(page), pdf.getPageCount()));
+      setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, pages: pdf.getPageCount() });
+      setAnnotations(old => old.filter(item => !deleted.has(item.page)).map(item => ({ ...item, page: mapPage(item.page) })));
+      setComments(old => old.filter(item => !deleted.has(item.page)).map(item => ({ ...item, page: mapPage(item.page) })));
+      setStrokes(old => old.filter(item => !deleted.has(item.page)).map(item => ({ ...item, page: mapPage(item.page) })));
+      setOcrPages(old => Object.fromEntries(Object.entries(old).filter(([key]) => !deleted.has(Number(key))).map(([key, value]) => [String(mapPage(Number(key))), value])));
+      setOcrWords(old => Object.fromEntries(Object.entries(old).filter(([key]) => !deleted.has(Number(key))).map(([key, value]) => [String(mapPage(Number(key))), value])));
+      setBookmarks(old => old.filter(item => !deleted.has(item.page)).map(item => ({ ...item, page: mapPage(item.page) })));
+      setPage(nextPage);
+      setPageNumberInput(String(nextPage));
+      setSelectedId(null);
+      setStatus(pagesToDelete.length + ' page(s) deleted. Page-linked text, comments, drawings, OCR data and bookmarks were adjusted.');
+    } catch (error) {
+      setStatus(error instanceof Error ? error.message : 'Could not delete pages.');
+    }
   }
 
   async function mergePdfs() {
@@ -2559,7 +2609,7 @@ export default function App() {
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'OCR all pages'}</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
-      <button className="toolbar-button" disabled={!document||document.pages<=1} onClick={()=>void deleteCurrentPage()}>▣ Delete page</button>
+      <button className="toolbar-button" disabled={!document||document.pages<=1||busy} onClick={()=>void deleteCurrentPage()}>▣ Delete pages</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void splitPdf()}>⇱ Split PDF</button>
       <label className="toolbar-button merge-file-picker">＋ Add PDFs to merge<input type="file" accept="application/pdf,.pdf" multiple disabled={busy} onChange={event=>{const incoming=Array.from(event.target.files||[]);setMergeFiles(old=>{const seen=new Set(old.map(file=>file.name+'|'+file.size+'|'+file.lastModified));const additions=incoming.filter(file=>{const key=file.name+'|'+file.size+'|'+file.lastModified;if(seen.has(key))return false;seen.add(key);return true;});const next=[...old,...additions];if(next.length>10){setStatus('Maximum 10 additional PDFs allowed. Only the first 10 are kept.');return next.slice(0,10);}return next;});event.currentTarget.value='';}} /></label>
       <button className="toolbar-button" disabled={!document||mergeFiles.length<1||busy} onClick={()=>void mergePdfs()}>Merge current + {mergeFiles.length}</button>
