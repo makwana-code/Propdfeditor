@@ -410,6 +410,7 @@ export default function App() {
   const documentInputRef = useRef<HTMLInputElement>(null);
   const [cloudUser, setCloudUser] = useState<{id:string;email?:string}|null>(null);
   const [page, setPage] = useState(1);
+  const [pageNumberInput, setPageNumberInput] = useState('1');
   const [continuousView, setContinuousView] = useState(false);
   const [continuousUrl, setContinuousUrl] = useState('');
   const [zoom, setZoom] = useState(100);
@@ -495,6 +496,15 @@ export default function App() {
   const pageSizeRef = useRef({ width: 0, height: 0 });
   const pageMetricsRef = useRef<Map<number, {width:number;height:number;scale:number}>>(new Map());
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
+  useEffect(() => { setPageNumberInput(String(page)); }, [page, document?.pages]);
+  function commitPageNumber(value = pageNumberInput) {
+    if (!document) return;
+    const parsed = Number(value.trim());
+    if (!value.trim() || !Number.isFinite(parsed)) { setPageNumberInput(String(page)); return; }
+    const target = Math.max(1, Math.min(document.pages, Math.trunc(parsed)));
+    setPage(target);
+    setPageNumberInput(String(target));
+  }
   useEffect(() => { setFontSizeInput(String(selected?.size ?? fontSize)); }, [selected?.size, fontSize]);
   useEffect(() => {
     if (!document) { setContinuousUrl(''); return; }
@@ -2488,7 +2498,7 @@ export default function App() {
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!selected} onClick={()=>selected&&deleteTextBox(selected.id)}>▤ Remove</button>
       <span className="toolbar-divider"/>
-      <label className="toolbar-page">Page <button className="toolbar-button toolbar-page-prev" type="button" title="Previous page" aria-label="Previous page" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={page} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label>
+      <label className="toolbar-page">Page <button className="toolbar-button toolbar-page-prev" type="button" title="Previous page" aria-label="Previous page" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={pageNumberInput} onChange={e=>setPageNumberInput(e.target.value)} onBlur={()=>commitPageNumber()} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitPageNumber();e.currentTarget.blur();}}}/> / {document?.pages||'–'}</label>
       <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'OCR all pages'}</button>
@@ -2558,7 +2568,7 @@ export default function App() {
             <span>or drop a file here</span>
           </div>}
         </div>
-        <div className="studio-statusbar"><span>{status || (document?'Page '+page+' of '+document.pages:'Ready')}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Browser download requested for '+downloadFallback.name+'.')}>⬇ Download ready · {downloadFallback.name}</a>}<div className="bottom-page-nav"><button disabled={!document} title="First page" aria-label="First page" onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} title="Previous page" aria-label="Previous page" onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><label>Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={document?page:1} onChange={e=>{const n=Number(e.target.value);if(Number.isInteger(n)&&n>=1&&n<=(document?.pages||1))setPage(n)}}/> / {document?.pages||'–'}</label><button disabled={!document||page>=(document?.pages||1)} title="Next page" aria-label="Next page" onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} title="Last page" aria-label="Last page" onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
+        <div className="studio-statusbar"><span>{status || (document?'Page '+page+' of '+document.pages:'Ready')}</span>{downloadFallback&&<a className="download-retry-link" href={downloadFallback.url} download={downloadFallback.name} onClick={()=>setStatus('Browser download requested for '+downloadFallback.name+'.')}>⬇ Download ready · {downloadFallback.name}</a>}<div className="bottom-page-nav"><button disabled={!document} title="First page" aria-label="First page" onClick={()=>setPage(1)}>⏮</button><button disabled={!document||page<=1} title="Previous page" aria-label="Previous page" onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><label>Page <input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={document?pageNumberInput:"1"} onChange={e=>setPageNumberInput(e.target.value)} onBlur={()=>commitPageNumber()} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitPageNumber();e.currentTarget.blur();}}}/> / {document?.pages||'–'}</label><button disabled={!document||page>=(document?.pages||1)} title="Next page" aria-label="Next page" onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button><button disabled={!document} title="Last page" aria-label="Last page" onClick={()=>setPage(document?.pages||1)}>⏭</button></div><span className="bottom-zoom">⌕　{Math.round(fitZoom*zoom/100)}%　<button disabled={!document} onClick={()=>setZoom(100)}>⛶</button></span></div>
       </article>
 
       {showRightPanel&&<div className="panel-resizer right-resizer" style={{gridColumn:showLeftPanel?'5':'2'}} role="separator" aria-orientation="vertical" aria-label="Resize properties panel" title="Drag to resize properties panel" onPointerDown={event=>{event.preventDefault();setResizingPanel('right')}} />}
