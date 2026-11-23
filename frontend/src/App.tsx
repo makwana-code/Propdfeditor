@@ -497,15 +497,31 @@ export default function App() {
   const pageMetricsRef = useRef<Map<number, {width:number;height:number;scale:number}>>(new Map());
   const selected = useMemo(() => annotations.find(a => a.id === selectedId) || null, [annotations, selectedId]);
   useEffect(() => { setPageNumberInput(String(page)); }, [page, document?.pages]);
+  function scrollToContinuousPage(targetPage: number) {
+    if (!continuousView || !document) return;
+    // Scroll the actual page inside the continuous viewer, not just update the
+    // page counter. scrollIntoView also works when the viewer is nested.
+    requestAnimationFrame(() => {
+      const container = stageRef.current;
+      const pageElement = container?.querySelector<HTMLElement>('.continuous-page-stage[data-page="' + targetPage + '"]');
+      if (pageElement) pageElement.scrollIntoView({ block: 'start', behavior: 'auto' });
+    });
+  }
+  function navigateToPage(targetPage: number) {
+    if (!document) return;
+    const target = Math.max(1, Math.min(document.pages, Math.trunc(targetPage)));
+    setPage(target);
+    setPageNumberInput(String(target));
+    scrollToContinuousPage(target);
+  }
   function commitPageNumber(value = pageNumberInput) {
     if (!document) return;
     const parsed = Number(value.trim());
     if (!value.trim() || !Number.isFinite(parsed)) { setPageNumberInput(String(page)); return; }
-    const target = Math.max(1, Math.min(document.pages, Math.trunc(parsed)));
-    setPage(target);
-    setPageNumberInput(String(target));
+    navigateToPage(parsed);
   }
-  // In continuous mode the page is a scroll position, not just the single-page canvas state.
+  // Keep scroll-driven page detection passive: only explicit page navigation
+  // should force a scroll position, otherwise scrolling would snap every page.
   useEffect(() => {
     if (!continuousView || !document) return;
     const container = stageRef.current;
@@ -2406,12 +2422,21 @@ export default function App() {
 
   async function rotateCurrentPage() {
     if (!document) return;
+    const targetPage = page;
     try {
-      const pdf = await PDFDocument.load(document.bytes.slice(0)); const target = pdf.getPage(page - 1);
-      target.setRotation(degrees((target.getRotation().angle + 90) % 360)); const bytes = await pdf.save();
+      const pdf = await PDFDocument.load(document.bytes.slice(0));
+      const target = pdf.getPage(targetPage - 1);
+      const currentAngle = ((target.getRotation().angle % 360) + 360) % 360;
+      target.setRotation(degrees((currentAngle + 90) % 360));
+      const bytes = await pdf.save();
       const file = new File([bytes as unknown as BlobPart], document.file.name, { type: 'application/pdf' });
+      // Replacing the PDF document triggers both single-page and continuous
+      // render pipelines to redraw from the updated bytes.
       setDocument({ file, bytes: bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength) as ArrayBuffer, pages: pdf.getPageCount() });
-      setStatus('Page ' + page + ' rotated 90 degrees clockwise.');
+      setPage(targetPage);
+      setPageNumberInput(String(targetPage));
+      scrollToContinuousPage(targetPage);
+      setStatus('Page ' + targetPage + ' rotated 90 degrees clockwise.');
     } catch (error) { setStatus(error instanceof Error ? error.message : 'Could not rotate page.'); }
   }
 
@@ -2529,8 +2554,8 @@ export default function App() {
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!selected} onClick={()=>selected&&deleteTextBox(selected.id)}>▤ Remove</button>
       <span className="toolbar-divider"/>
-      <label className="toolbar-page">Page <button className="toolbar-button toolbar-page-prev" type="button" title="Previous page" aria-label="Previous page" disabled={!document||page<=1} onClick={()=>setPage(p=>Math.max(1,p-1))}>◀</button><input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={pageNumberInput} onChange={e=>setPageNumberInput(e.target.value)} onBlur={()=>commitPageNumber()} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitPageNumber();e.currentTarget.blur();}}}/> / {document?.pages||'–'}</label>
-      <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>setPage(p=>Math.min(document?.pages||1,p+1))}>▶</button>
+      <label className="toolbar-page">Page <button className="toolbar-button toolbar-page-prev" type="button" title="Previous page" aria-label="Previous page" disabled={!document||page<=1} onClick={()=>navigateToPage(page-1)}>◀</button><input aria-label="Go to page" type="number" min={1} max={document?.pages||1} disabled={!document} value={pageNumberInput} onChange={e=>setPageNumberInput(e.target.value)} onBlur={()=>commitPageNumber()} onKeyDown={e=>{if(e.key==="Enter"){e.preventDefault();commitPageNumber();e.currentTarget.blur();}}}/> / {document?.pages||'–'}</label>
+      <button className="toolbar-button" disabled={!document||page>=(document?.pages||1)} onClick={()=>navigateToPage(page+1)}>▶</button>
       <span className="toolbar-divider"/>
       <button className="toolbar-button" disabled={!document||busy} onClick={()=>void runOcr()}>{busy?'Processing OCR…':'OCR all pages'}</button>
       <button className="toolbar-button" disabled={!document} onClick={()=>void rotateCurrentPage()}>↻ Rotate page</button>
