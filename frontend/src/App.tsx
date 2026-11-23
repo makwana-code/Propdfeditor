@@ -814,47 +814,79 @@ export default function App() {
   }
 
   function fitSelectedBoxToText() {
-    if (!selected) return;
+    // Use the actively edited annotation first. The toolbar selection can be
+    // stale/null when the inline Fit to text button is clicked.
+    const targetId = editingTextId || selectedId;
+    const target = annotations.find(item => item.id === targetId) || selected;
+    if (!target) {
+      setStatus('Select or edit a text box first.');
+      return;
+    }
     const canvas = window.document.createElement('canvas');
     const context = canvas.getContext('2d');
-    const metrics = pageMetricsRef.current.get(selected.page);
-    const pageWidth = continuousView
-      ? (continuousCanvasRefs.current.get(selected.page)?.clientWidth || metrics?.width || 1)
-      : (canvasRef.current?.clientWidth || metrics?.width || 1);
-    const pageHeight = continuousView
-      ? (continuousCanvasRefs.current.get(selected.page)?.clientHeight || metrics?.height || 1)
-      : (canvasRef.current?.clientHeight || metrics?.height || 1);
+    const pageElement = window.document.querySelector(
+      (continuousView ? '.continuous-page-stage[data-page="' : '.pdf-page-stage[data-page="') + target.page + '"]'
+    ) as HTMLElement | null;
+    const pageRect = pageElement?.getBoundingClientRect();
+    const metrics = pageMetricsRef.current.get(target.page);
+    const pageWidth = pageRect?.width || (continuousView
+      ? (continuousCanvasRefs.current.get(target.page)?.clientWidth || metrics?.width || 1)
+      : (canvasRef.current?.clientWidth || metrics?.width || 1));
+    const pageHeight = pageRect?.height || (continuousView
+      ? (continuousCanvasRefs.current.get(target.page)?.clientHeight || metrics?.height || 1)
+      : (canvasRef.current?.clientHeight || metrics?.height || 1));
     const scale = metrics?.scale || fitZoom * zoom / 10000;
-    const fontPx = Math.max(6, selected.size * scale);
-    if (!context || !pageWidth || !pageHeight) return;
-    context.font = (selected.italic ? 'italic ' : '') + (selected.bold ? '700 ' : '400 ') + fontPx + 'px "' + selected.font + '"';
-    const availableWidth = Math.max(12, (1 - selected.x) * pageWidth - 8);
-    const sourceLines = (selected.text || ' ').split(/\r?\n/);
+    const fontPx = Math.max(6, target.size * scale);
+    if (!context || pageWidth <= 1 || pageHeight <= 1) {
+      setStatus('Could not measure the page. Please wait for it to finish rendering, then try Fit to text again.');
+      return;
+    }
+    context.font = (target.italic ? 'italic ' : '') + (target.bold ? '700 ' : '400 ') + fontPx + 'px "' + target.font + '"';
+    const availableWidth = Math.max(12, (1 - target.x) * pageWidth - 8);
+    const lines = (target.text || ' ').split(/\r?\n/);
     let visualLineCount = 0;
     let widestLine = 0;
-    for (const sourceLine of sourceLines) {
-      const words = sourceLine.split(/\s+/).filter(Boolean);
-      if (!words.length) { visualLineCount += 1; continue; }
+    const measure = (value: string) => context.measureText(value).width;
+    for (const sourceLine of lines) {
+      if (!sourceLine.length) { visualLineCount += 1; continue; }
       let currentLine = '';
-      for (const word of words) {
-        const candidate = currentLine ? currentLine + ' ' + word : word;
-        if (currentLine && context.measureText(candidate).width > availableWidth) {
-          widestLine = Math.max(widestLine, context.measureText(currentLine).width);
-          visualLineCount += 1;
-          currentLine = word;
-        } else {
-          currentLine = candidate;
+      // Wrap on spaces first, then character-wrap very long words so they
+      // cannot remain clipped outside the resized text box.
+      for (const word of sourceLine.split(/(\s+)/).filter(Boolean)) {
+        if (/^\s+$/.test(word)) {
+          if (currentLine && measure(currentLine + word) <= availableWidth) currentLine += word;
+          continue;
+        }
+        let remaining = word;
+        while (remaining.length) {
+          const candidate = currentLine + remaining;
+          if (measure(candidate) <= availableWidth) {
+            currentLine = candidate;
+            remaining = '';
+          } else if (currentLine) {
+            widestLine = Math.max(widestLine, measure(currentLine.trimEnd()));
+            visualLineCount += 1;
+            currentLine = '';
+          } else {
+            let fitCount = 1;
+            while (fitCount < remaining.length && measure(remaining.slice(0, fitCount + 1)) <= availableWidth) fitCount += 1;
+            const piece = remaining.slice(0, fitCount);
+            widestLine = Math.max(widestLine, measure(piece));
+            visualLineCount += 1;
+            remaining = remaining.slice(fitCount);
+          }
         }
       }
-      widestLine = Math.max(widestLine, context.measureText(currentLine).width);
+      widestLine = Math.max(widestLine, measure(currentLine.trimEnd()));
       visualLineCount += 1;
     }
     const widthPx = Math.min(availableWidth, Math.max(12, widestLine + 8));
     const heightPx = Math.max(fontPx * 1.25 + 6, visualLineCount * fontPx * 1.2 + 6);
-    const nextWidth = Math.min(1 - selected.x, widthPx / pageWidth);
-    const nextHeight = Math.min(1 - selected.y, heightPx / pageHeight);
-    updateAnnotation(selected.id, { w: nextWidth, h: nextHeight });
-    setStatus('Text box fitted to its text content.');
+    const nextWidth = Math.min(1 - target.x, widthPx / pageWidth);
+    const nextHeight = Math.min(1 - target.y, heightPx / pageHeight);
+    setSelectedId(target.id);
+    setAnnotations(old => old.map(item => item.id === target.id ? { ...item, w: nextWidth, h: nextHeight } : item));
+    setStatus('Text box resized to fit its text. If the text is very long, it wraps within the page width.');
   }
 
   useEffect(() => {
