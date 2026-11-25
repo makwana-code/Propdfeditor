@@ -346,8 +346,8 @@ function fontStyleFor(annotation: TextAnnotation) {
   return annotation.bold && annotation.italic ? style.boldItalic : annotation.bold ? style.bold : annotation.italic ? style.italic : style.regular;
 };
 
-type TextAnnotation = { id: string; page: number; sourceFontName?: string; sourceFontFamily?: string; sourceFontSize?: number; formatChanged?: boolean; ocrRebuilt?: boolean; deletedOriginal?: boolean; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number} };
-type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; color?: string; cleanBackground?: boolean };
+type TextAnnotation = { id: string; page: number; sourceFontName?: string; sourceFontFamily?: string; sourceFontSize?: number; formatChanged?: boolean; ocrRebuilt?: boolean; deletedOriginal?: boolean; kind?: 'whiteout'; text: string; x: number; y: number; w: number; h: number; maskColor?: string; font: string; size: number; color: string; styleId?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; coverOriginal?: boolean; sourceHitId?: string; originalText?: string; sourceRect?: {x0:number;y0:number;x1:number;y1:number}; sourceRects?: Array<{x0:number;y0:number;x1:number;y1:number}> };
+type PdfTextHit = { id: string; page: number; text: string; x: number; y: number; w: number; h: number; sourceRects?: Array<{x0:number;y0:number;x1:number;y1:number}>; fontSize: number; fontName?: string; fontFamily?: string; bold?: boolean; italic?: boolean; underline?: boolean; align?: 'left'|'center'|'right'; color?: string; cleanBackground?: boolean };
 type PdfComment = { id: string; page: number; x: number; y: number; boxX?: number; boxY?: number; text: string; boxColor?: string; textColor?: string; fontSize?: number; fontFamily?: string; bold?: boolean; italic?: boolean };
 type OcrWord = { text: string; x: number; y: number; w: number; h: number; cleanBackground?: boolean };
 
@@ -702,7 +702,7 @@ export default function App() {
   }
 
   function beginFormatPainterSourceSelection(hit: PdfTextHit, event: ReactPointerEvent<HTMLElement>) {
-    if (tool !== 'select' || event.button !== 0) return;
+    if ((tool !== 'select' && tool !== 'edit') || event.button !== 0) return;
     event.preventDefault();
     event.stopPropagation();
     formatPainterSelectingRef.current = true;
@@ -711,7 +711,7 @@ export default function App() {
     setFormatPainterSourceHit(hit);
     setSelectedId(null);
     setEditingTextId(null);
-    setStatus('Drag across the original word, sentence or lines while holding the left mouse button. Release, then click Format Painter.');
+    setStatus(tool==='edit'?'Drag across the words you want to edit, then release to open them together in one text box.':'Drag across the original word, sentence or lines while holding the left mouse button. Release, then click Format Painter.');
   }
 
   function extendFormatPainterSourceSelection(hit: PdfTextHit, event: ReactPointerEvent<HTMLElement>) {
@@ -740,22 +740,31 @@ export default function App() {
   function finishFormatPainterSourceSelection() {
     formatPainterSelectingRef.current = false;
     const hits = formatPainterSelectionHitsRef.current;
-    if (hits.length > 1) {
+    if (hits.length > 1 && formatPainterDidDragRef.current) {
       const left = Math.min(...hits.map(item => item.x));
       const top = Math.min(...hits.map(item => item.y));
       const right = Math.max(...hits.map(item => item.x + item.w));
       const bottom = Math.max(...hits.map(item => item.y + item.h));
       const first = hits[0];
-      setFormatPainterSourceHit({
+      const merged: PdfTextHit = {
         ...first,
-        id: 'format-selection-' + hits.map(item => item.id).join('|'),
+        id: 'multi-edit-' + hits.map(item => item.id).join('|'),
         text: hits.map(item => item.text).join(' '),
         x: left, y: top, w: right - left, h: bottom - top,
+        sourceRects: hits.map(item=>({x0:item.x,y0:item.y,x1:item.x+item.w,y1:item.y+item.h})),
         fontSize: hits.reduce((sum, item) => sum + item.fontSize, 0) / hits.length,
         bold: hits.filter(item => item.bold).length > hits.length / 2,
         italic: hits.filter(item => item.italic).length > hits.length / 2
-      });
-      setStatus('Original text selection captured (' + hits.length + ' text blocks). Click Format Painter, then click the destination text box.');
+      };
+      if (tool==='edit') {
+        formatPainterSelectionHitsRef.current=[];
+        formatPainterDidDragRef.current=false;
+        editExistingText(merged);
+        setStatus('Multiple selected words opened together. Edit the complete phrase, then click Done');
+      } else {
+        setFormatPainterSourceHit(merged);
+        setStatus('Original text selection captured (' + hits.length + ' text blocks). Click Format Painter, then click the destination text box');
+      }
     }
   }
 
@@ -1568,7 +1577,7 @@ export default function App() {
     const appearance = sampleTextAppearance(hit);
     const maskColor = appearance.maskColor;
     const annotation: TextAnnotation = {
-      id, page: hit.page, text: hit.text, originalText: hit.text, sourceRect: { x0: hit.x, y0: hit.y, x1: hit.x + hit.w, y1: hit.y + hit.h }, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
+      id, page: hit.page, text: hit.text, originalText: hit.text, sourceRect: { x0: hit.x, y0: hit.y, x1: hit.x + hit.w, y1: hit.y + hit.h }, sourceRects: hit.sourceRects, x: boxX, y: boxY, w: boxW, h: boxH, maskColor,
       font: resolveFormatPainterFont(hit, true) || style.font, size: Math.max(1, hit.fontSize), sourceFontSize: hit.fontSize,
       color: appearance.color, styleId: 'body', bold:!!hit.bold, italic:!!hit.italic, align: 'left', sourceFontName:hit.fontName, sourceFontFamily:hit.fontFamily, coverOriginal: false, sourceHitId: hit.id,
       ocrRebuilt: hit.id.startsWith('ocr-')
@@ -2044,7 +2053,7 @@ export default function App() {
           setStatus('Preparing original text replacement…');
           const form = new FormData();
           form.append('file', new Blob([sourceBytes], { type: 'application/pdf' }), document.file.name);
-          form.append('edits', JSON.stringify(originalEdits.map(item => ({
+          form.append('edits', JSON.stringify(originalEdits.filter(item=>!item.sourceHitId?.startsWith('multi-edit-')).map(item => ({
             page: item.page,
             originalText: item.originalText,
             text: item.text,
@@ -2121,13 +2130,15 @@ export default function App() {
           // textarea may grow wider, but its white background must never erase
           // table borders or neighbouring cells in the exported PDF.
           if (annotation.sourceHitId && annotation.sourceRect) {
-            const r = annotation.sourceRect;
+            const rects = annotation.sourceRects?.length ? annotation.sourceRects : [annotation.sourceRect];
             const pad = 0.35;
-            const left = r.x0 * width + pad;
-            const right = r.x1 * width - pad;
-            const bottom = height - r.y1 * height + pad;
-            const topEdge = height - r.y0 * height - pad;
-            target.drawRectangle({x:left,y:bottom,width:Math.max(0,right-left),height:Math.max(0,topEdge-bottom),color:maskRgb,borderWidth:0});
+            for (const r of rects) {
+              const left = r.x0 * width + pad;
+              const right = r.x1 * width - pad;
+              const bottom = height - r.y1 * height + pad;
+              const topEdge = height - r.y0 * height - pad;
+              target.drawRectangle({x:left,y:bottom,width:Math.max(0,right-left),height:Math.max(0,topEdge-bottom),color:maskRgb,borderWidth:0});
+            }
           } else {
             target.drawRectangle({x:x-0.35,y:height-top-annotation.h*height-0.35,width:annotation.w*width+0.7,height:annotation.h*height+0.7,color:maskRgb,borderWidth:0});
           }
