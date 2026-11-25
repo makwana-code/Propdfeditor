@@ -405,3 +405,23 @@
   -webkit-appearance:none;
   margin:0;
 }
+
+/* Native drag selection/copy for extracted PDF text. Text remains visually transparent over the PDF canvas. */
+.source-text-hit{
+  color:transparent!important;
+  display:block!important;
+  white-space:pre!important;
+  user-select:text!important;
+  -webkit-user-select:text!important;
+  cursor:text!important;
+  font:inherit;
+  touch-action:auto!important;
+}
+.source-text-hit::selection{
+  background:rgba(59,130,246,.38)!important;
+  color:transparent!important;
+}
+.pdf-annotation .committed-text{
+  user-select:text;
+  -webkit-user-select:text;
+}
