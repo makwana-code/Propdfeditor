@@ -1223,6 +1223,10 @@ export default function App() {
         target.tagName === 'SELECT'
       );
       const command = event.ctrlKey || event.metaKey;
+      // Let the active PDF text editor handle Space and Backspace natively.
+      // This is a capture-phase global shortcut handler, so return before any
+      // editor shortcuts can interfere with typing spaces or deleting chars.
+      if (target?.closest('.pdf-annotation textarea') && (event.key === ' ' || event.key === 'Backspace')) return;
 
       // Save always creates a downloadable, edited PDF. Avoid relying on the
       // optional File System Access API / overwrite permission for Ctrl+S.
