@@ -439,7 +439,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [historyItems, setHistoryItems] = useState<EditorHistoryItem[]>([]);
   const copiedAnnotationRef = useRef<TextAnnotation | null>(null);
-  const copiedPdfTextRef = useRef<{text:string;page:number;hit:PdfTextHit|null} | null>(null);
+  const copiedPdfTextRef = useRef<{text:string;page:number;hit:PdfTextHit|null;sourceFile:File|null} | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [font, setFont] = useState('Arial');
   const [showFontFamilyList, setShowFontFamilyList] = useState(false);
@@ -1250,7 +1250,7 @@ export default function App() {
           const hitElement = anchorElement?.closest('[data-source-hit-id]') as HTMLElement | null;
           const hitId = hitElement?.getAttribute('data-source-hit-id');
           const selectedHit = hitId ? [...continuousHits, ...textHits].find(hit => hit.id === hitId) || null : null;
-          copiedPdfTextRef.current = { text:selectedText, page:selectedHit?.page || page, hit:selectedHit };
+          copiedPdfTextRef.current = { text:selectedText, page:selectedHit?.page || page, hit:selectedHit, sourceFile:document?.file || null };
           event.preventDefault();
           event.stopPropagation();
           const fallbackCopy = () => {
@@ -1316,6 +1316,10 @@ export default function App() {
       if (command && event.key.toLowerCase() === 'v' && copiedPdfTextRef.current && !isTyping && (tool==='select-text' || tool==='edit' || tool==='select')) {
         event.preventDefault(); event.stopPropagation();
         const copied = copiedPdfTextRef.current;
+        if (!document || !copied.sourceFile || copied.sourceFile !== document.file) {
+          setStatus('Copied PDF text can only be pasted back into the same open PDF. Reopen the source PDF and copy the text again.');
+          return;
+        }
         const hit = copied.hit;
         const text = copied.text;
         const id = crypto.randomUUID();
