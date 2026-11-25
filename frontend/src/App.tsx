@@ -1270,7 +1270,7 @@ export default function App() {
       // The selected PDF text box is the keyboard target, even when its
       // textarea has focus. Arrow keys nudge the whole box; Delete removes it.
       // Use Ctrl+Arrow for caret navigation while editing text.
-      if ((tool === 'select' || tool === 'edit') && selectedId && !busy && !isTyping && editingTextId !== selectedId && !command && !event.altKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key)) {
+      if ((tool === 'select' || tool === 'edit') && selectedId && !busy && (!isTyping || !!target?.closest('.pdf-annotation textarea')) && !command && !event.altKey && ['ArrowLeft','ArrowRight','ArrowUp','ArrowDown'].includes(event.key) && (!window.getSelection()?.toString() || !target?.closest('.pdf-annotation textarea'))) {
         event.preventDefault();
         event.stopPropagation();
         const step = event.shiftKey ? 0.01 : 0.004;
