@@ -439,7 +439,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [historyItems, setHistoryItems] = useState<EditorHistoryItem[]>([]);
   const copiedAnnotationRef = useRef<TextAnnotation | null>(null);
-  const copiedPdfTextRef = useRef<{text:string;page:number;hit:PdfTextHit|null;sourceFile:File|null} | null>(null);
+  const copiedPdfTextRef = useRef<{text:string;page:number;hit:PdfTextHit|null;sourceFile:File|null;bounds:{x:number;y:number;w:number;h:number}|null} | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [font, setFont] = useState('Arial');
   const [showFontFamilyList, setShowFontFamilyList] = useState(false);
@@ -1261,16 +1261,21 @@ export default function App() {
               const hit = id ? allHits.find(item => item.id === id) : null;
               return hit ? { text: element.textContent || '', hit } : null;
             }).filter((item): item is {text:string;hit:PdfTextHit} => !!item && !!item.text);
-            if (runParts.length > 1) {
+            if (runParts.length > 0) {
               const pageWidth = pageMetricsRef.current.get(runParts[0].hit.page)?.width || 800;
               const scale = pageMetricsRef.current.get(runParts[0].hit.page)?.scale || 1;
+              // Keep the source text runs in their original visual order and
+              // translate their measured PDF gap into actual whitespace. A
+              // single space loses table-column alignment in copied PDF rows.
               selectedText = runParts.reduce((joined, part, index) => {
                 if (!index) return part.text;
                 const previous = runParts[index - 1].hit;
-                const gap = (part.hit.x - (previous.x + previous.w)) * pageWidth;
-                const spaceThreshold = Math.max(1.2, Math.min(5, Math.min(previous.fontSize, part.hit.fontSize) * scale * 0.16));
-                const needsSpace = gap > spaceThreshold && !joined.endsWith(' ') && !part.text.startsWith(' ');
-                return joined + (needsSpace ? ' ' : '') + part.text;
+                const gap = Math.max(0, (part.hit.x - (previous.x + previous.w)) * pageWidth);
+                const fontPx = Math.max(1, Math.min(previous.fontSize, part.hit.fontSize) * scale);
+                const spaceWidth = Math.max(1.5, fontPx * 0.25);
+                const gapSpaces = gap > fontPx * 0.12 ? Math.max(1, Math.min(40, Math.round(gap / spaceWidth))) : 0;
+                const needsSeparator = gapSpaces > 0 && !joined.endsWith(' ') && !part.text.startsWith(' ');
+                return joined + (needsSeparator ? ' '.repeat(gapSpaces) : '') + part.text;
               }, '');
             }
           } catch { selectedText = nativeSelectedText; }
@@ -1280,7 +1285,21 @@ export default function App() {
           const hitElement = anchorElement?.closest('[data-source-hit-id]') as HTMLElement | null;
           const hitId = hitElement?.getAttribute('data-source-hit-id');
           const selectedHit = hitId ? [...continuousHits, ...textHits].find(hit => hit.id === hitId) || null : null;
-          copiedPdfTextRef.current = { text:selectedText, page:selectedHit?.page || page, hit:selectedHit, sourceFile:document?.file || null };
+          const selectedHitParts = (() => {
+            try {
+              const fragment = selection?.getRangeAt(0).cloneContents();
+              const elements = Array.from(fragment?.querySelectorAll('[data-source-hit-id]') || []) as HTMLElement[];
+              const allHits = [...continuousHits, ...textHits];
+              return elements.map(element => allHits.find(item => item.id === element.getAttribute('data-source-hit-id'))).filter((item): item is PdfTextHit => !!item);
+            } catch { return selectedHit ? [selectedHit] : []; }
+          })();
+          const bounds = selectedHitParts.length ? {
+            x:Math.min(...selectedHitParts.map(item=>item.x)),
+            y:Math.min(...selectedHitParts.map(item=>item.y)),
+            w:Math.max(...selectedHitParts.map(item=>item.x+item.w))-Math.min(...selectedHitParts.map(item=>item.x)),
+            h:Math.max(...selectedHitParts.map(item=>item.y+item.h))-Math.min(...selectedHitParts.map(item=>item.y))
+          } : null;
+          copiedPdfTextRef.current = { text:selectedText, page:selectedHit?.page || page, hit:selectedHit, sourceFile:document?.file || null, bounds };
           event.preventDefault();
           event.stopPropagation();
           const fallbackCopy = () => {
@@ -1353,10 +1372,13 @@ export default function App() {
         const hit = copied.hit;
         const text = copied.text;
         const id = crypto.randomUUID();
-        const baseX = hit ? Math.min(1-.34, hit.x) : .08;
-        const baseY = hit ? Math.min(1-.08, hit.y + hit.h + .012) : .08;
+        const bounds = copied.bounds;
+        const baseX = bounds?.x ?? (hit ? Math.min(1-.34, hit.x) : .08);
+        const baseY = bounds ? Math.min(1-.08, bounds.y + bounds.h + .012) : (hit ? Math.min(1-.08, hit.y + hit.h + .012) : .08);
         const size = Math.max(6, Math.min(36, hit?.fontSize || fontSize));
-        const width = Math.max(.12, Math.min(.88, hit?.w || .34));
+        // Use the full selected run span for the pasted text box so Done
+        // doesn't squeeze a multi-column selection into the first text run.
+        const width = Math.max(.12, Math.min(.94, bounds?.w || hit?.w || .34));
         const height = Math.max(.045, Math.min(.3, size / 720 * Math.max(1, text.split('\\n').length) + .025));
         const newText: TextAnnotation = { id, page:copied.page, text, x:Math.max(0,Math.min(1-width,baseX)), y:Math.max(0,Math.min(1-height,baseY)), w:width, h:height, font:hit?.fontFamily || font || 'Arial', size, color:hit?.color || fontColor || '#222222', bold:!!hit?.bold, italic:!!hit?.italic, underline:!!hit?.underline, align:hit?.align || 'left' };
         setAnnotations(old=>[...old,newText]); setSelectedId(id); setEditingTextId(null); setPage(copied.page); setPageNumberInput(String(copied.page)); setTool('edit'); setStatus('Selected PDF text pasted into this PDF on page '+copied.page+'. Move it as needed, then Download or Save to apply it.'); return;
