@@ -439,6 +439,7 @@ export default function App() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [historyItems, setHistoryItems] = useState<EditorHistoryItem[]>([]);
   const copiedAnnotationRef = useRef<TextAnnotation | null>(null);
+  const copiedPdfTextRef = useRef<{text:string;page:number;hit:PdfTextHit|null} | null>(null);
   const [editingTextId, setEditingTextId] = useState<string | null>(null);
   const [font, setFont] = useState('Arial');
   const [showFontFamilyList, setShowFontFamilyList] = useState(false);
@@ -1244,6 +1245,12 @@ export default function App() {
       if (tool === 'select-text' && command && event.key.toLowerCase() === 'c') {
         const selectedText = window.getSelection()?.toString() || '';
         if (selectedText.trim()) {
+          const selection = window.getSelection();
+          const anchorElement = selection?.anchorNode instanceof Element ? selection.anchorNode : selection?.anchorNode?.parentElement;
+          const hitElement = anchorElement?.closest('[data-source-hit-id]') as HTMLElement | null;
+          const hitId = hitElement?.getAttribute('data-source-hit-id');
+          const selectedHit = hitId ? [...continuousHits, ...textHits].find(hit => hit.id === hitId) || null : null;
+          copiedPdfTextRef.current = { text:selectedText, page:selectedHit?.page || page, hit:selectedHit };
           event.preventDefault();
           event.stopPropagation();
           const fallbackCopy = () => {
@@ -1305,6 +1312,20 @@ export default function App() {
       }
       if (command && event.key.toLowerCase() === 'c' && selectedId && !window.getSelection()?.toString().trim() && (!isTyping || target?.closest('.pdf-annotation'))) {
         if (copySelectedAnnotation()) { event.preventDefault(); event.stopPropagation(); return; }
+      }
+      if (command && event.key.toLowerCase() === 'v' && copiedPdfTextRef.current && !isTyping && (tool==='select-text' || tool==='edit' || tool==='select')) {
+        event.preventDefault(); event.stopPropagation();
+        const copied = copiedPdfTextRef.current;
+        const hit = copied.hit;
+        const text = copied.text;
+        const id = crypto.randomUUID();
+        const baseX = hit ? Math.min(1-.34, hit.x) : .08;
+        const baseY = hit ? Math.min(1-.08, hit.y + hit.h + .012) : .08;
+        const size = Math.max(6, Math.min(36, hit?.fontSize || fontSize));
+        const width = Math.max(.12, Math.min(.88, hit?.w || .34));
+        const height = Math.max(.045, Math.min(.3, size / 720 * Math.max(1, text.split('\\n').length) + .025));
+        const newText: TextAnnotation = { id, page:copied.page, text, x:Math.max(0,Math.min(1-width,baseX)), y:Math.max(0,Math.min(1-height,baseY)), w:width, h:height, font:hit?.fontFamily || font || 'Arial', size, color:hit?.color || fontColor || '#222222', bold:!!hit?.bold, italic:!!hit?.italic, underline:!!hit?.underline, align:hit?.align || 'left' };
+        setAnnotations(old=>[...old,newText]); setSelectedId(id); setEditingTextId(null); setPage(copied.page); setPageNumberInput(String(copied.page)); setTool('edit'); setStatus('Selected PDF text pasted into this PDF on page '+copied.page+'. Move it as needed, then Download or Save to apply it.'); return;
       }
       if (command && event.key.toLowerCase() === 'v' && copiedAnnotationRef.current && !isTyping) {
         event.preventDefault(); event.stopPropagation(); pasteCopiedAnnotation(); return;
