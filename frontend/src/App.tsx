@@ -1237,6 +1237,40 @@ export default function App() {
         return;
       }
 
+      // In Select Text mode, explicitly copy the browser selection to the
+      // system clipboard. The PDF text overlays are positioned spans, and
+      // relying only on Chromium's default copy behavior can leave the
+      // selection highlighted without placing text on the clipboard.
+      if (tool === 'select-text' && command && event.key.toLowerCase() === 'c') {
+        const selectedText = window.getSelection()?.toString() || '';
+        if (selectedText.trim()) {
+          event.preventDefault();
+          event.stopPropagation();
+          const fallbackCopy = () => {
+            const temporary = window.document.createElement('textarea');
+            temporary.value = selectedText;
+            temporary.setAttribute('readonly', '');
+            temporary.style.position = 'fixed';
+            temporary.style.left = '-9999px';
+            temporary.style.top = '0';
+            window.document.body.appendChild(temporary);
+            temporary.select();
+            let copied = false;
+            try { copied = window.document.execCommand('copy'); } catch { copied = false; }
+            temporary.remove();
+            setStatus(copied ? 'Selected PDF text copied. Press Ctrl+V to paste.' : 'Copy failed. Please select the text again and press Ctrl+C.');
+          };
+          if (navigator.clipboard?.writeText) {
+            navigator.clipboard.writeText(selectedText)
+              .then(() => setStatus('Selected PDF text copied. Press Ctrl+V to paste.'))
+              .catch(fallbackCopy);
+          } else {
+            fallbackCopy();
+          }
+          return;
+        }
+      }
+
       // Ctrl+B toggles bold on the currently selected PDF text box.
       // Keep native browser behavior in unrelated inputs and form fields.
       if (command && event.key.toLowerCase() === 'b' && selectedId && (!isTyping || !!target?.closest('.pdf-annotation'))) {
