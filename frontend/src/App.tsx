@@ -641,7 +641,7 @@ export default function App() {
     const x = point?.x ?? Math.min(1-copied.w, copied.x+.02);
     const y = point?.y ?? Math.min(1-copied.h, copied.y+.02);
     const id = crypto.randomUUID();
-    const clone = {...copied,id,x:Math.max(0,Math.min(1-copied.w,x)),y:Math.max(0,Math.min(1-copied.h,y))};
+    const clone = {...copied,id,x:Math.max(0,Math.min(1-copied.w,x)),y:Math.max(0,Math.min(1-copied.h,y)),sourceHitId:undefined,sourceRect:undefined,originalText:undefined,coverOriginal:false,deletedOriginal:false,formatChanged:false};
     setAnnotations(old=>[...old,clone]); setSelectedId(id); setEditingTextId(null); setTool('edit');
     setStatus('Text box pasted.'); return true;
   }
