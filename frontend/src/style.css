@@ -391,3 +391,17 @@
 .continuous-page-stage .pdf-annotation.source-text-edit textarea{
   
 }
+
+/* Hide native number-input spinner controls for page navigation only. */
+.studio-statusbar .bottom-page-nav input[type="number"],
+.studio-toolbar .toolbar-page input[type="number"]{
+  -moz-appearance:textfield;
+  appearance:textfield;
+}
+.studio-statusbar .bottom-page-nav input[type="number"]::-webkit-inner-spin-button,
+.studio-statusbar .bottom-page-nav input[type="number"]::-webkit-outer-spin-button,
+.studio-toolbar .toolbar-page input[type="number"]::-webkit-inner-spin-button,
+.studio-toolbar .toolbar-page input[type="number"]::-webkit-outer-spin-button{
+  -webkit-appearance:none;
+  margin:0;
+}
