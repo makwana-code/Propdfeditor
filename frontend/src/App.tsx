@@ -2142,33 +2142,44 @@ export default function App() {
         // 8 pt inset can introduce new line breaks after Save.
         const maxWidth = annotation.sourceHitId ? boxWidth : Math.max(1, boxWidth - inset * 2);
         const wrapped: string[] = [];
-        for (const paragraph of annotation.text.split('\n')) {
-          if (!paragraph) { wrapped.push(''); continue; }
-          let current = '';
-          for (const word of paragraph.split(/\s+/)) {
-            const candidate = current ? current + ' ' + word : word;
-            if (current && embedded.widthOfTextAtSize(candidate, size) > maxWidth) {
-              wrapped.push(current);
-              current = word;
-            } else if (!current && embedded.widthOfTextAtSize(word, size) > maxWidth) {
-              let chunk = '';
-              for (const char of word) {
-                if (chunk && embedded.widthOfTextAtSize(chunk + char, size) > maxWidth) {
-                  wrapped.push(chunk);
-                  chunk = char;
-                } else chunk += char;
-              }
-              current = chunk;
-            } else current = candidate;
+        const hasExplicitLineBreak = annotation.text.includes('\n');
+        // Keep a single-line edit as a single PDF text line. Browser font metrics
+        // and embedded PDF font metrics can differ slightly, so re-wrapping here
+        // caused text that looked one line in the editor to split after download.
+        if (!hasExplicitLineBreak) {
+          wrapped.push(annotation.text);
+        } else {
+          for (const paragraph of annotation.text.split('\n')) {
+            if (!paragraph) { wrapped.push(''); continue; }
+            let current = '';
+            for (const word of paragraph.split(/\s+/)) {
+              const candidate = current ? current + ' ' + word : word;
+              if (current && embedded.widthOfTextAtSize(candidate, size) > maxWidth) {
+                wrapped.push(current);
+                current = word;
+              } else if (!current && embedded.widthOfTextAtSize(word, size) > maxWidth) {
+                let chunk = '';
+                for (const char of word) {
+                  if (chunk && embedded.widthOfTextAtSize(chunk + char, size) > maxWidth) {
+                    wrapped.push(chunk);
+                    chunk = char;
+                  } else chunk += char;
+                }
+                current = chunk;
+              } else current = candidate;
+            }
+            if (current) wrapped.push(current);
           }
-          if (current) wrapped.push(current);
         }
         const widest = Math.max(1, ...wrapped.map(line => embedded.widthOfTextAtSize(line, size)));
-        // Preserve the detected source font size for in-place PDF text replacements.
-        // The replacement box is allowed to wrap/expand; never silently scale the
-        // user's original 8.7 pt (or other detected size) down to fit its old box.
-        const fitScale = annotation.sourceHitId ? 1 : Math.min(1, maxWidth / widest, boxHeight / Math.max(1, wrapped.length * size * 1.18));
-        size = annotation.sourceHitId ? annotation.size : Math.max(3, size * fitScale);
+        // Fit single-line text to the saved box without adding a line break.
+        // Keep the annotation's x/y anchor untouched so its placement remains.
+        const widthFit = Math.min(1, maxWidth / widest);
+        const heightFit = Math.min(1, boxHeight / Math.max(1, wrapped.length * size * 1.18));
+        const fitScale = hasExplicitLineBreak
+          ? (annotation.sourceHitId ? 1 : Math.min(widthFit, heightFit))
+          : Math.min(widthFit, heightFit);
+        size = Math.max(3, size * fitScale);
         const lineHeight = size * 1.18;
         wrapped.forEach((line, index) => {
           if (!line) return;
