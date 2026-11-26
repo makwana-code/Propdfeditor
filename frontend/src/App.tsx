@@ -2000,43 +2000,11 @@ export default function App() {
         // actually changes; restoring the original text removes the mask again.
         next.coverOriginal = patch.text !== (a.originalText ?? '') || !!next.formatChanged;
       }
-      if (typeof patch.text === 'string') {
-        const targetCanvas = continuousView ? continuousCanvasRefs.current.get(a.page) : canvasRef.current;
-        const metrics = pageMetricsRef.current.get(a.page);
-        const pageWidth = targetCanvas?.clientWidth || metrics?.width || pageSizeRef.current.width || 1;
-        const pageHeight = targetCanvas?.clientHeight || metrics?.height || pageSizeRef.current.height || 1;
-        const pageScale = metrics?.scale || fitZoom * zoom / 10000;
-        const fontPx = Math.max(6, a.size * pageScale);
-        const measureCanvas = window.document.createElement('canvas');
-        const measure = measureCanvas.getContext('2d');
-        const fontWeight = next.bold ? '700' : '400';
-        const fontStyle = next.italic ? 'italic' : 'normal';
-        if (measure) measure.font = fontStyle+' '+fontWeight+' '+fontPx+'px "'+next.font+'"';
-        const availableWidth = Math.max(12, (1 - a.x) * pageWidth - 8);
-        let visualLineCount = 0;
-        let widestLine = 0;
-        for (const sourceLine of patch.text.split(/\r?\n/)) {
-          const words = sourceLine.split(/\s+/).filter(Boolean);
-          if (!words.length) { visualLineCount += 1; continue; }
-          let currentLine = '';
-          for (const word of words) {
-            const candidate = currentLine ? currentLine + ' ' + word : word;
-            const candidateWidth = measure?.measureText(candidate).width || candidate.length * fontPx * .56;
-            if (currentLine && candidateWidth > availableWidth) {
-              widestLine = Math.max(widestLine, measure?.measureText(currentLine).width || currentLine.length * fontPx * .56);
-              visualLineCount += 1;
-              currentLine = word;
-            } else currentLine = candidate;
-          }
-          widestLine = Math.max(widestLine, measure?.measureText(currentLine).width || currentLine.length * fontPx * .56);
-          visualLineCount += 1;
-        }
-        const fittedWidth = Math.min(availableWidth, Math.max(12, widestLine + 8));
-        const fittedHeight = Math.max(fontPx * 1.25 + 6, visualLineCount * fontPx * 1.2 + 6);
-        // Keep the chosen font size; resize the box to the actual wrapped text.
-        next.w = Math.min(1 - a.x, fittedWidth / pageWidth);
-        next.h = Math.min(1 - a.y, fittedHeight / pageHeight);
-      }
+      // Keep the text box's dimensions stable while the user types.
+      // Recalculating width/height from every keystroke caused Space and
+      // Backspace to shrink the box (especially when a trailing word/space
+      // changed the measured text width). Text box sizing is user-controlled
+      // through the resize handles and the Properties panel.
       return next;
     }));
   }
