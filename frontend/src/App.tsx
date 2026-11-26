@@ -2246,11 +2246,11 @@ export default function App() {
         const color = rgb(parseInt(annotation.color.slice(1,3),16)/255, parseInt(annotation.color.slice(3,5),16)/255, parseInt(annotation.color.slice(5,7),16)/255);
         const boxWidth = Math.max(1, annotation.w * width);
         const boxHeight = Math.max(1, annotation.h * height);
-        const inset = annotation.sourceHitId ? 0 : Math.min(4, boxWidth / 20);
-        // Original PDF text is edited in a border-box textarea with no inner
-        // padding. Use that same full width when exporting, otherwise the extra
-        // 8 pt inset can introduce new line breaks after Save.
-        const maxWidth = annotation.sourceHitId ? boxWidth : Math.max(1, boxWidth - inset * 2);
+        // The editor textarea and committed text layer use a zero-padding
+        // border-box. Export must use the exact same left/top anchor and full
+        // box width; an export-only inset shifts table-cell text horizontally.
+        const inset = 0;
+        const maxWidth = boxWidth;
         const wrapped: string[] = [];
         const hasExplicitLineBreak = annotation.text.includes('\n');
         // Keep a single-line edit as a single PDF text line. Browser font metrics
@@ -2284,12 +2284,11 @@ export default function App() {
         const widest = Math.max(1, ...wrapped.map(line => embedded.widthOfTextAtSize(line, size)));
         // Fit single-line text to the saved box without adding a line break.
         // Keep the annotation's x/y anchor untouched so its placement remains.
-        const widthFit = Math.min(1, maxWidth / widest);
-        const heightFit = Math.min(1, boxHeight / Math.max(1, wrapped.length * size * 1.18));
-        const fitScale = hasExplicitLineBreak
-          ? (annotation.sourceHitId ? 1 : Math.min(widthFit, heightFit))
-          : Math.min(widthFit, heightFit);
-        size = Math.max(3, size * fitScale);
+        // Keep the font size identical to the editor. Auto-scaling text to
+        // fit the saved rectangle made exported text subtly smaller and moved
+        // column alignment compared with the on-screen layout. The box size
+        // and font size are user-controlled; export preserves both exactly.
+        void widest;
         const lineHeight = size * 1.18;
         wrapped.forEach((line, index) => {
           if (!line) return;
