@@ -2192,6 +2192,84 @@ export default function App() {
       const pdf = await PDFDocument.load(sourceBytes);
       pdf.registerFontkit(fontkit);
       const embeddedFonts = new Map<string, Awaited<ReturnType<typeof pdf.embedFont>>>();
+      // When the browser fallback deletes original PDF text, a white mask can
+      // also cover table rules underneath the glyphs. Detect straight rules
+      // from the original PDF render and redraw only the rule portions inside
+      // each deletion mask, between the mask and any replacement text.
+      const restoredLinesByAnnotation = new Map<string, Array<{x0:number;y0:number;x1:number;y1:number;thickness:number;color:any}>>();
+      if (originalEdits.length && !nativeEditsApplied) {
+        try {
+          const sourcePdf = pdfRef.current || await (async () => {
+            const task = pdfjs.getDocument({ data: new Uint8Array(document.bytes.slice(0)) });
+            return await task.promise;
+          })();
+          const pageIds = [...new Set(originalEdits.map(item => item.page))];
+          for (const pageId of pageIds) {
+            const sourcePage = await sourcePdf.getPage(pageId);
+            const scale = 2;
+            const viewport = sourcePage.getViewport({ scale });
+            const sourceCanvas = window.document.createElement('canvas');
+            sourceCanvas.width = Math.ceil(viewport.width);
+            sourceCanvas.height = Math.ceil(viewport.height);
+            const sourceContext = sourceCanvas.getContext('2d', { willReadFrequently: true });
+            if (!sourceContext) continue;
+            await sourcePage.render({ canvasContext: sourceContext, viewport }).promise;
+            const image = sourceContext.getImageData(0, 0, sourceCanvas.width, sourceCanvas.height);
+            const pixelIsInk = (x:number,y:number) => {
+              if (x<0 || y<0 || x>=image.width || y>=image.height) return false;
+              const p=(y*image.width+x)*4;
+              return image.data[p+3]>180 && (image.data[p]*.299+image.data[p+1]*.587+image.data[p+2]*.114)<105;
+            };
+            for (const item of originalEdits.filter(edit => edit.page === pageId && edit.sourceHitId)) {
+              const rects=item.sourceRects?.length?item.sourceRects:[item.sourceRect!];
+              const lines:Array<{x0:number;y0:number;x1:number;y1:number;thickness:number;color:any}>=[];
+              for (const rect of rects) {
+                const x0=Math.max(0,Math.floor(rect.x0*viewport.width)),x1=Math.min(image.width-1,Math.ceil(rect.x1*viewport.width));
+                const y0=Math.max(0,Math.floor(rect.y0*viewport.height)),y1=Math.min(image.height-1,Math.ceil(rect.y1*viewport.height));
+                if (x1<=x0 || y1<=y0) continue;
+                const extraX=Math.round(12*scale),extraY=Math.round(4*scale);
+                const scanX0=Math.max(0,x0-extraX),scanX1=Math.min(image.width-1,x1+extraX);
+                const scanY0=Math.max(0,y0-extraY),scanY1=Math.min(image.height-1,y1+extraY);
+                const scanWidth=scanX1-scanX0+1,scanHeight=scanY1-scanY0+1;
+                const horizontalRows:number[]=[];
+                for(let y=scanY0;y<=scanY1;y++){
+                  let count=0;for(let x=scanX0;x<=scanX1;x++)if(pixelIsInk(x,y))count++;
+                  if(count/scanWidth>=.76)horizontalRows.push(y);
+                }
+                const verticalCols:number[]=[];
+                for(let x=x0;x<=x1;x++){
+                  let count=0;for(let y=Math.max(0,y0-extraY);y<=Math.min(image.height-1,y1+extraY);y++)if(pixelIsInk(x,y))count++;
+                  if(count/scanHeight>=.68)verticalCols.push(x);
+                }
+                const groups=(values:number[])=>{
+                  const out:number[][]=[];for(const value of values){const last=out[out.length-1];if(last&&value<=last[last.length-1]+1)last.push(value);else out.push([value]);}return out;
+                };
+                const makeColor=(samples:Array<[number,number]>)=>{
+                  let rr=0,gg=0,bb=0,n=0;for(const [x,y] of samples){if(!pixelIsInk(x,y))continue;const p=(y*image.width+x)*4;rr+=image.data[p];gg+=image.data[p+1];bb+=image.data[p+2];n++;}
+                  return n?rgb(rr/n/255,gg/n/255,bb/n/255):rgb(0,0,0);
+                };
+                for(const group of groups(horizontalRows)){
+                  const row=Math.round((group[0]+group[group.length-1])/2);
+                  // Only restore a rule that crosses the actual text mask.
+                  if(row<y0-2||row>y1+2)continue;
+                  const samples:Array<[number,number]>=[];for(let x=scanX0;x<=scanX1;x+=Math.max(1,Math.floor(scanWidth/80)))samples.push([x,row]);
+                  lines.push({x0:Math.max(0,rect.x0-.003),y0:row/viewport.height,x1:Math.min(1,rect.x1+.003),y1:row/viewport.height,thickness:Math.max(.35,group.length/scale),color:makeColor(samples)});
+                }
+                for(const group of groups(verticalCols)){
+                  const col=Math.round((group[0]+group[group.length-1])/2);
+                  if(col<x0-2||col>x1+2)continue;
+                  const samples:Array<[number,number]>=[];for(let y=scanY0;y<=scanY1;y+=Math.max(1,Math.floor(scanHeight/80)))samples.push([col,y]);
+                  lines.push({x0:col/viewport.width,y0:Math.max(0,rect.y0-.003),x1:col/viewport.width,y1:Math.min(1,rect.y1+.003),thickness:Math.max(.35,group.length/scale),color:makeColor(samples)});
+                }
+              }
+              restoredLinesByAnnotation.set(item.id,lines);
+            }
+            sourceCanvas.width=0;sourceCanvas.height=0;
+          }
+        } catch (lineRestoreError) {
+          console.warn('Could not detect table rules beneath deleted PDF text:', lineRestoreError);
+        }
+      }
       for (const annotation of annotations) {
         if (annotation.kind === 'whiteout') {
           const target = pdf.getPage(annotation.page - 1); const { width, height } = target.getSize();
@@ -2237,6 +2315,17 @@ export default function App() {
               const bottom = height - r.y1 * height + pad;
               const topEdge = height - r.y0 * height - pad;
               target.drawRectangle({x:left,y:bottom,width:Math.max(0,right-left),height:Math.max(0,topEdge-bottom),color:maskRgb,borderWidth:0});
+            }
+            // Restore original table rules that were hidden by the text mask.
+            // Coordinates are normalized top-down from the original PDF.js
+            // render; pdf-lib uses bottom-up page coordinates.
+            for (const line of restoredLinesByAnnotation.get(annotation.id) || []) {
+              target.drawLine({
+                start:{x:line.x0*width,y:height-line.y0*height},
+                end:{x:line.x1*width,y:height-line.y1*height},
+                thickness:line.thickness,
+                color:line.color
+              });
             }
           } else {
             target.drawRectangle({x:x-0.35,y:height-top-annotation.h*height-0.35,width:annotation.w*width+0.7,height:annotation.h*height+0.7,color:maskRgb,borderWidth:0});
