@@ -2270,8 +2270,6 @@ export default function App() {
               }
               restoredLinesByAnnotation.set(item.id,lines);
             }
-
-            }
             sourceCanvas.width=0;sourceCanvas.height=0;
           }
         } catch (lineRestoreError) {
