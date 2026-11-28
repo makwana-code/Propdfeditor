@@ -2218,7 +2218,8 @@ export default function App() {
             const pixelIsInk = (x:number,y:number) => {
               if (x<0 || y<0 || x>=image.width || y>=image.height) return false;
               const p=(y*image.width+x)*4;
-              return image.data[p+3]>180 && (image.data[p]*.299+image.data[p+1]*.587+image.data[p+2]*.114)<105;
+              // Include anti-aliased gray rules as well as solid black strokes.
+              return image.data[p+3]>160 && (image.data[p]*.299+image.data[p+1]*.587+image.data[p+2]*.114)<190;
             };
             for (const item of originalEdits.filter(edit => edit.page === pageId && edit.sourceHitId)) {
               const rects=item.sourceRects?.length?item.sourceRects:[item.sourceRect!];
@@ -2227,42 +2228,49 @@ export default function App() {
                 const x0=Math.max(0,Math.floor(rect.x0*viewport.width)),x1=Math.min(image.width-1,Math.ceil(rect.x1*viewport.width));
                 const y0=Math.max(0,Math.floor(rect.y0*viewport.height)),y1=Math.min(image.height-1,Math.ceil(rect.y1*viewport.height));
                 if (x1<=x0 || y1<=y0) continue;
-                const extraX=Math.round(12*scale),extraY=Math.round(4*scale);
+                const extraX=Math.round(16*scale),extraY=Math.round(8*scale);
                 const scanX0=Math.max(0,x0-extraX),scanX1=Math.min(image.width-1,x1+extraX);
                 const scanY0=Math.max(0,y0-extraY),scanY1=Math.min(image.height-1,y1+extraY);
                 const scanWidth=scanX1-scanX0+1,scanHeight=scanY1-scanY0+1;
-                const horizontalRows:number[]=[];
-                for(let y=scanY0;y<=scanY1;y++){
-                  let count=0;for(let x=scanX0;x<=scanX1;x++)if(pixelIsInk(x,y))count++;
-                  if(count/scanWidth>=.76)horizontalRows.push(y);
-                }
-                const verticalCols:number[]=[];
-                for(let x=x0;x<=x1;x++){
-                  let count=0;for(let y=Math.max(0,y0-extraY);y<=Math.min(image.height-1,y1+extraY);y++)if(pixelIsInk(x,y))count++;
-                  if(count/scanHeight>=.68)verticalCols.push(x);
-                }
                 const groups=(values:number[])=>{
                   const out:number[][]=[];for(const value of values){const last=out[out.length-1];if(last&&value<=last[last.length-1]+1)last.push(value);else out.push([value]);}return out;
                 };
+                const longestRun=(start:number,end:number,inkAt:(v:number)=>boolean)=>{
+                  let run=0,best=0;for(let v=start;v<=end;v++){if(inkAt(v)){run++;best=Math.max(best,run);}else run=0;}return best;
+                };
+                const horizontalRows:number[]=[];
+                for(let y=scanY0;y<=scanY1;y++){
+                  let count=0;for(let x=scanX0;x<=scanX1;x++)if(pixelIsInk(x,y))count++;
+                  const run=longestRun(scanX0,scanX1,x=>pixelIsInk(x,y));
+                  if(count>=Math.max(3,scanWidth*.28)&&run>=Math.max(5,scanWidth*.22))horizontalRows.push(y);
+                }
+                const verticalCols:number[]=[];
+                for(let x=scanX0;x<=scanX1;x++){
+                  let count=0;for(let y=scanY0;y<=scanY1;y++)if(pixelIsInk(x,y))count++;
+                  const run=longestRun(scanY0,scanY1,y=>pixelIsInk(x,y));
+                  if(count>=Math.max(3,scanHeight*.28)&&run>=Math.max(5,scanHeight*.22))verticalCols.push(x);
+                }
                 const makeColor=(samples:Array<[number,number]>)=>{
                   let rr=0,gg=0,bb=0,n=0;for(const [x,y] of samples){if(!pixelIsInk(x,y))continue;const p=(y*image.width+x)*4;rr+=image.data[p];gg+=image.data[p+1];bb+=image.data[p+2];n++;}
                   return n?rgb(rr/n/255,gg/n/255,bb/n/255):rgb(0,0,0);
                 };
                 for(const group of groups(horizontalRows)){
                   const row=Math.round((group[0]+group[group.length-1])/2);
-                  // Only restore a rule that crosses the actual text mask.
+                  // Draw only rules that pass through the deleted glyph area.
                   if(row<y0-2||row>y1+2)continue;
-                  const samples:Array<[number,number]>=[];for(let x=scanX0;x<=scanX1;x+=Math.max(1,Math.floor(scanWidth/80)))samples.push([x,row]);
+                  const samples:Array<[number,number]>=[];for(let x=scanX0;x<=scanX1;x+=Math.max(1,Math.floor(scanWidth/100)))samples.push([x,row]);
                   lines.push({x0:Math.max(0,rect.x0-.003),y0:row/viewport.height,x1:Math.min(1,rect.x1+.003),y1:row/viewport.height,thickness:Math.max(.35,group.length/scale),color:makeColor(samples)});
                 }
                 for(const group of groups(verticalCols)){
                   const col=Math.round((group[0]+group[group.length-1])/2);
                   if(col<x0-2||col>x1+2)continue;
-                  const samples:Array<[number,number]>=[];for(let y=scanY0;y<=scanY1;y+=Math.max(1,Math.floor(scanHeight/80)))samples.push([col,y]);
+                  const samples:Array<[number,number]>=[];for(let y=scanY0;y<=scanY1;y+=Math.max(1,Math.floor(scanHeight/100)))samples.push([col,y]);
                   lines.push({x0:col/viewport.width,y0:Math.max(0,rect.y0-.003),x1:col/viewport.width,y1:Math.min(1,rect.y1+.003),thickness:Math.max(.35,group.length/scale),color:makeColor(samples)});
                 }
               }
               restoredLinesByAnnotation.set(item.id,lines);
+            }
+
             }
             sourceCanvas.width=0;sourceCanvas.height=0;
           }
